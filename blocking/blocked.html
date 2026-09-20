@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Take a pause – GoalGuard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="blocked.css" />
+</head>
+<body>
+  <main class="card" id="card" data-kind="block">
+    <p class="eyebrow" id="eyebrow">Take a pause</p>
+    <h1 id="headline">This page doesn't appear related to your weekly goal.</h1>
+
+    <dl class="facts">
+      <div>
+        <dt>Weekly goal</dt>
+        <dd id="goal">—</dd>
+      </div>
+      <div>
+        <dt>Page</dt>
+        <dd id="pageTitle">—</dd>
+      </div>
+      <div>
+        <dt>Site</dt>
+        <dd id="domain">—</dd>
+      </div>
+      <div id="usedRow" hidden>
+        <dt>Distraction session</dt>
+        <dd id="used">—</dd>
+      </div>
+      <div id="scoreRow" hidden>
+        <dt>Relevance estimate</dt>
+        <dd id="score">—</dd>
+      </div>
+      <div id="aiRow" hidden>
+        <dt>AI classification</dt>
+        <dd id="aiVerdict">—</dd>
+      </div>
+      <div id="evidenceRow" hidden>
+        <dt>Evidence</dt>
+        <dd id="evidence">—</dd>
+      </div>
+    </dl>
+    <p class="why"><button type="button" class="linklike" id="whyBtn">Why?</button></p>
+    <div class="details" id="details" hidden></div>
+
+    <section class="ledger" id="ledgerBox">
+      <p class="ledger-known" id="ledgerKnown" hidden></p>
+      <form id="ledgerForm" class="ledger-form" autocomplete="off">
+        <label for="ledgerIntent" class="ledger-label">Why are you opening this? <span class="muted">(optional — one concrete task)</span></label>
+        <input id="ledgerIntent" type="text" maxlength="200" placeholder="e.g. Watch lecture 4 on processes" />
+        <div class="ledger-actions">
+          <button type="submit" id="ledgerAdd" class="secondary small">Add to Ledger</button>
+          <a href="#" id="ledgerOpenLink" class="muted small-link">View ledger</a>
+        </div>
+      </form>
+      <div id="ledgerDup" class="ledger-dup" hidden>
+        <p>You already have: <q id="ledgerDupText"></q></p>
+        <button type="button" id="ledgerUseExisting" class="secondary small">Use existing</button>
+        <button type="button" id="ledgerCreateAnother" class="secondary small">Create another</button>
+      </div>
+      <p id="ledgerSaved" class="ledger-saved" hidden></p>
+    </section>
+
+    <section class="timer" aria-live="polite">
+      <div class="count" id="count">--</div>
+      <div class="unit" id="unit">seconds</div>
+      <p class="hint" id="hint">Loading…</p>
+    </section>
+
+    <div class="actions">
+      <button id="back" class="secondary" type="button">Go Back</button>
+      <button id="closeTab" class="secondary" type="button" hidden>Close Tab</button>
+      <button id="continue" class="primary" type="button" disabled>Continue</button>
+    </div>
+
+    <p class="fine" id="fine">Continuing grants temporary access to this site. Time spent still counts as distraction time.</p>
+    <p class="feedback" id="feedback">Was this classification correct?
+      <button type="button" class="linklike" data-fb="yes">Yes</button> ·
+      <button type="button" class="linklike" data-fb="no">No</button>
+    </p>
+    <p class="feedback" id="feedbackFix" hidden>This page is actually
+      <button type="button" class="linklike" data-label="relevant">relevant</button> ·
+      <button type="button" class="linklike" data-label="irrelevant">irrelevant</button>
+    </p>
+    <p class="feedback" id="feedbackDone" hidden>Thanks — stored locally and used the next time this page is seen.</p>
+    <p class="error" id="error" hidden></p>
+    <p class="recovery" id="recovery" hidden>
+      Something went wrong talking to the extension. <a id="recoveryLink" href="#">Open the page anyway</a>
+      or <a href="about:blank" id="blankLink">go to a blank page</a>.
+    </p>
+  </main>
+  <script type="module" src="blocked.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GoalGuard</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="top">
+    <span class="brand">GoalGuard</span>
+    <label class="switch" title="Pause or resume GoalGuard">
+      <input type="checkbox" id="enabled" />
+      <span></span>
+    </label>
+  </header>
+
+  <section class="block">
+    <h2>Goal</h2>
+    <form id="goalForm" class="goal-form">
+      <input id="goalInput" type="text" placeholder="e.g. Study operating systems and C++" maxlength="500" autocomplete="off" />
+      <button type="submit" id="goalSave">Save</button>
+    </form>
+    <p class="goal-text" id="goalText" hidden></p>
+  </section>
+
+  <section class="block">
+    <h2>Current page</h2>
+    <p class="page-title" id="pageTitle">—</p>
+    <p class="verdict" id="verdict"><span class="badge" id="badge">…</span> <span id="verdictText"></span></p>
+    <p class="meta" id="meta"></p>
+    <div class="row" id="explainRow" hidden>
+      <button type="button" class="link" id="whyBtn">Why?</button>
+      <span class="feedback" id="feedback">
+        Correct?
+        <button type="button" data-fb="yes">Yes</button>
+        <button type="button" data-fb="no">No</button>
+      </span>
+      <span class="feedback" id="feedbackFix" hidden>
+        Actually:
+        <button type="button" data-label="relevant">relevant</button>
+        <button type="button" data-label="irrelevant">irrelevant</button>
+      </span>
+      <span class="meta" id="feedbackDone" hidden>Thanks — noted locally.</span>
+    </div>
+    <div class="explain" id="explain" hidden></div>
+    <pre class="debug" id="debug" hidden></pre>
+  </section>
+
+  <section class="block">
+    <h2>Today</h2>
+    <table class="stats">
+      <tr><td>Productive</td><td id="todayRelevant">0m</td></tr>
+      <tr><td>Questionable</td><td id="todayQuestionable">0m</td></tr>
+      <tr><td>Distraction</td><td id="todayIrrelevant">0m</td></tr>
+      <tr class="sub"><td>after overrides</td><td id="todayOverride">0m</td></tr>
+    </table>
+  </section>
+
+  <section class="block">
+    <h2>Weekly goal progress</h2>
+    <div class="progress"><div id="progressBar"></div></div>
+    <p class="meta" id="progressText"></p>
+  </section>
+
+  <section class="block">
+    <h2>Friction this week</h2>
+    <table class="stats">
+      <tr><td>Distraction attempts</td><td id="wkAttempts">0</td></tr>
+      <tr><td>Friction pauses</td><td id="wkPauses">0</td></tr>
+      <tr><td>Overrides</td><td id="wkOverrides">0</td></tr>
+      <tr><td>Abandoned attempts</td><td id="wkAbandoned">0</td></tr>
+      <tr class="sub"><td>reset by switching away</td><td id="wkResets">0</td></tr>
+      <tr><td>Access granted by overrides</td><td id="wkGranted">0m</td></tr>
+      <tr class="sub"><td>expired automatically</td><td id="wkExpired">0</td></tr>
+      <tr><td>Time spent after overrides</td><td id="wkOverrideTime">0m</td></tr>
+    </table>
+  </section>
+
+  <section class="block tasks" id="ledgerBlock">
+    <h2>Your tasks <span id="ledgerSummary" class="h2-note"></span></h2>
+    <p class="task-group" id="ledgerGroup" hidden></p>
+    <ul class="ledger-list" id="ledgerList"></ul>
+    <p class="meta" id="ledgerEmpty" hidden>No pending tasks.</p>
+    <p class="meta" id="ledgerMore" hidden></p>
+    <form id="ledgerQuick" class="task-add" autocomplete="off" hidden>
+      <label for="ledgerQuickIntent" class="meta">What do you need to do?</label>
+      <input id="ledgerQuickIntent" type="text" maxlength="200" placeholder="e.g. Check issue #142" />
+      <p class="meta" id="ledgerQuickSite"></p>
+      <div class="task-actions">
+        <button type="submit">Save</button>
+        <button type="button" class="link" id="ledgerQuickCancel">Cancel</button>
+      </div>
+    </form>
+    <div class="task-actions" id="ledgerActions">
+      <button type="button" class="link" id="ledgerAddBtn">+ Add task</button>
+      <button type="button" class="link" id="ledgerViewAll">View all</button>
+    </div>
+  </section>
+
+  <footer class="bottom">
+    <span class="status">
+      <span class="model" id="modelStatus">AI classifier: idle</span>
+      <span class="model" id="llmStatus"></span>
+      <span class="model" id="searchStatus"></span>
+    </span>
+    <a href="#" id="openOptions">Settings</a>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

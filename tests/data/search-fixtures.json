@@ -1,0 +1,134 @@
+{
+  "processes pages.cs.wisc.edu": [
+    {
+      "title": "Operating Systems: Three Easy Pieces \u2013 Processes",
+      "url": "https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-intro.pdf",
+      "snippet": "The abstraction provided by the OS of a running program is the process. Process API, fork, exec, scheduling."
+    },
+    {
+      "title": "OSTEP: Virtualization \u2013 Processes and the Process API",
+      "url": "https://pages.cs.wisc.edu/~remzi/OSTEP/",
+      "snippet": "Chapter on process creation, states and the operating system process API."
+    }
+  ],
+  "processes linkedin.com": [
+    {
+      "title": "Processes | LinkedIn",
+      "url": "https://www.linkedin.com/company/processes",
+      "snippet": "Business process consulting company page. Follow for updates on management and operations."
+    }
+  ],
+  "systems mit.edu": [
+    {
+      "title": "Systems | MIT",
+      "url": "https://mit.edu/systems",
+      "snippet": "MIT systems research groups and initiatives across engineering."
+    }
+  ],
+  "architecture archdaily.com": [
+    {
+      "title": "Architecture News | ArchDaily",
+      "url": "https://www.archdaily.com/",
+      "snippet": "The latest architecture news, building projects and design inspiration."
+    }
+  ],
+  "architecture cs.cmu.edu": [
+    {
+      "title": "15-213 Computer Systems: Architecture",
+      "url": "https://www.cs.cmu.edu/~213/",
+      "snippet": "Machine-level representation of programs, memory hierarchy, processor architecture and caches."
+    }
+  ],
+  "how it works howstuffworks.com": [
+    {
+      "title": "HowStuffWorks \u2013 How It Works",
+      "url": "https://www.howstuffworks.com/",
+      "snippet": "Explanations of how everyday things work, from cars to computers."
+    }
+  ],
+  "episode 42 podcasts.apple.com": [],
+  "complete guide medium.com": [],
+  "developer interview youtube.com": [
+    {
+      "title": "Developer Interview - YouTube",
+      "url": "https://www.youtube.com/results?q=developer+interview",
+      "snippet": "Interviews with software developers about careers and tools."
+    }
+  ],
+  "building better systems infoq.com": [
+    {
+      "title": "Building Better Systems \u2013 Distributed Systems Talk | InfoQ",
+      "url": "https://www.infoq.com/presentations/building-better-systems/",
+      "snippet": "A talk on distributed systems design, concurrency, scheduling and fault tolerance in operating systems."
+    },
+    {
+      "title": "Building Better Systems \u2013 software architecture",
+      "url": "https://www.youtube.com/watch?v=x",
+      "snippet": "Video about systems architecture and kernel design trade-offs."
+    }
+  ],
+  "building better systems forbes.com": [
+    {
+      "title": "Building Better Systems For Your Sales Team \u2013 Forbes",
+      "url": "https://www.forbes.com/sites/x/building-better-systems",
+      "snippet": "Business leadership advice on building better management systems and processes for growth."
+    }
+  ],
+  "latest update store.epicgames.com": [
+    {
+      "title": "Latest Update \u2013 Epic Games Store",
+      "url": "https://store.epicgames.com/news",
+      "snippet": "Patch notes and the latest updates for popular video games."
+    }
+  ],
+  "everything you need to know buzzfeed.com": [
+    {
+      "title": "Everything You Need To Know \u2013 BuzzFeed",
+      "url": "https://www.buzzfeed.com/",
+      "snippet": "Celebrity news, quizzes and viral entertainment stories."
+    }
+  ],
+  "understanding the future ted.com": [
+    {
+      "title": "Understanding the Future | TED Talks",
+      "url": "https://www.ted.com/",
+      "snippet": "Talks about the future of society, technology and ideas worth spreading."
+    }
+  ],
+  "alex's latest interview youtube.com": [],
+  "how i built it github.com": [],
+  "chapter 7 ostep.org": [
+    {
+      "title": "OSTEP \u2013 Chapter 7: CPU Scheduling",
+      "url": "https://www.ostep.org/",
+      "snippet": "Operating Systems: Three Easy Pieces chapter 7 introduces scheduling policies such as FIFO, SJF and round robin."
+    }
+  ],
+  "lecture 12 ocw.mit.edu": [
+    {
+      "title": "Lecture 12 | MIT OpenCourseWare",
+      "url": "https://ocw.mit.edu/",
+      "snippet": "Free lecture notes and videos from MIT courses."
+    }
+  ],
+  "home reddit.com": [
+    {
+      "title": "Reddit \u2013 Dive into anything",
+      "url": "https://www.reddit.com/",
+      "snippet": "Reddit is a network of communities where people can dive into their interests, hobbies and passions."
+    }
+  ],
+  "untitled docs.google.com": [],
+  "linus torvalds interview": [
+    {
+      "title": "Linus Torvalds - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Linus_Torvalds",
+      "snippet": "Finnish-American software engineer who is the creator and lead developer of the Linux kernel."
+    },
+    {
+      "title": "Linus Torvalds interview: kernel development and Git",
+      "url": "https://www.youtube.com/watch?v=y",
+      "snippet": "Torvalds discusses Linux kernel development, scheduling and maintainers."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "goalguard",
+  "version": "0.1.0",
+  "description": "Privacy-first, goal-based screen-time limiter for Firefox using local BGE-small embeddings.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs tests/model/*.test.mjs tests/integration/*.test.mjs",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:model": "node --test tests/model/*.test.mjs",
+    "test:integration": "node --test tests/integration/*.test.mjs",
+    "benchmark": "node scripts/benchmark.mjs",
+    "package": "node scripts/package.mjs",
+    "lint:manifest": "node scripts/check-manifest.mjs",
+    "benchmark:layers": "node scripts/benchmark-layers.mjs"
+  },
+  "devDependencies": {
+    "@xenova/transformers": "2.17.2"
+  },
+  "overrides": {
+    "sharp": "npm:noop2@2.0.0"
+  },
+  "license": "MIT"
+}

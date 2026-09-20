@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "GoalGuard \u2013 Goal-based Screen Time",
+  "version": "0.1.0",
+  "description": "Privacy-first screen-time limiter: local BGE-small embeddings decide whether the current tab is relevant to your weekly goal. No cloud, no telemetry.",
+  "homepage_url": "https://github.com/ksu-gitreaper807/Non-compete-agreement",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "goalguard@local.extension",
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ],
+        "optional": [
+          "websiteContent"
+        ]
+      }
+    }
+  },
+  "permissions": [
+    "tabs",
+    "storage",
+    "alarms",
+    "idle",
+    "unlimitedStorage",
+    "scripting"
+  ],
+  "background": {
+    "scripts": [
+      "src/background/background.js"
+    ],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "GoalGuard",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://html.duckduckgo.com https://huggingface.co https://*.huggingface.co https://*.hf.co http://localhost:* http://127.0.0.1:*"
+  },
+  "optional_host_permissions": [
+    "https://html.duckduckgo.com/*",
+    "https://huggingface.co/*",
+    "https://cdn-lfs.huggingface.co/*",
+    "https://cdn-lfs-us-1.huggingface.co/*",
+    "https://cas-bridge.xethub.hf.co/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]
+}
