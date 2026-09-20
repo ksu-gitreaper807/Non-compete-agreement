@@ -9,9 +9,12 @@ const api = globalThis.browser ?? globalThis.chrome;
 const params = parseBlockedPageParams(location.search);
 
 const el = Object.fromEntries(
-  ['card', 'eyebrow', 'headline', 'goal', 'pageTitle', 'domain', 'scoreRow', 'score', 'count', 'unit', 'hint', 'back', 'continue', 'error', 'recovery', 'recoveryLink', 'fine']
+  ['card', 'eyebrow', 'headline', 'goal', 'pageTitle', 'domain', 'scoreRow', 'score', 'aiRow', 'aiVerdict', 'evidenceRow', 'evidence', 'whyBtn', 'details', 'count', 'unit', 'hint', 'back', 'continue', 'error', 'recovery', 'recoveryLink', 'fine', 'feedback', 'feedbackFix', 'feedbackDone']
     .map((id) => [id, document.getElementById(id)])
 );
+
+let explanation = null;
+const SOURCE_LABELS = { explicit_rule: 'your rule', regex: 'a built-in rule', embedding: 'semantic similarity to your goal', local_llm: 'the local AI model', fallback: 'no signal' };
 
 let unlockAt = null;
 let generation = null;
@@ -40,6 +43,52 @@ function renderStatic() {
     el.score.textContent = `${Math.round(params.score * 100)}%`;
   }
   if (params.url) el.recoveryLink.href = params.url;
+}
+
+/**
+ * Explanation is a read-only view of the cached classification; asking for it never changes
+ * the decision or the timer. Details are hidden behind "Why?" to keep the page calm.
+ */
+async function loadExplanation() {
+  try {
+    explanation = await send('classifyText', { title: params.title, url: params.url });
+  } catch {
+    explanation = null;
+  }
+  if (!explanation || explanation.error) return;
+  if (explanation.sourceKind === 'local_llm') {
+    el.aiRow.hidden = false;
+    el.aiVerdict.textContent = `${explanation.classification} (${Math.round((explanation.confidence ?? 0) * 100)}% confidence)`;
+  }
+  const evidence = explanation.llm?.evidence?.length ? explanation.llm.evidence.join(', ') : explanation.llm?.reason || null;
+  if (evidence) {
+    el.evidenceRow.hidden = false;
+    el.evidence.textContent = evidence;
+  }
+}
+
+function renderDetails() {
+  const box = el.details;
+  box.innerHTML = '';
+  const add = (text) => { const p = document.createElement('p'); p.textContent = text; box.append(p); };
+  if (!explanation) { add('No details available.'); return; }
+  add(`Decided by ${SOURCE_LABELS[explanation.sourceKind] ?? explanation.source}.`);
+  if (explanation.reason) add(`Reason: ${explanation.reason}`);
+  if (typeof explanation.semanticScore === 'number') add(`Semantic relevance: ${Math.round(explanation.semanticScore * 100)}%${explanation.nearestPositive ? ` (closest goal topic: ${explanation.nearestPositive}; closest distraction: ${explanation.nearestNegative ?? '-'})` : ''}`);
+  if (explanation.evidenceQuality) add(`Evidence quality: ${explanation.evidenceQuality}`);
+  if (explanation.searchUsed && explanation.webContext?.length) {
+    add('Web context used:');
+    const ul = document.createElement('ul');
+    for (const r of explanation.webContext) { const li = document.createElement('li'); li.textContent = `${r.title}${r.domain ? ` (${r.domain})` : ''}`; ul.append(li); }
+    box.append(ul);
+  }
+}
+
+async function sendFeedback(userLabel) {
+  await send('submitFeedback', { domain: params.domain, title: params.title, prediction: params.classification, userLabel, source: explanation?.source }).catch(() => {});
+  el.feedback.hidden = true;
+  el.feedbackFix.hidden = true;
+  el.feedbackDone.hidden = false;
 }
 
 async function sync() {
@@ -169,6 +218,20 @@ function formatMinutes(m) {
 
 el.continue.addEventListener('click', onContinue);
 el.back.addEventListener('click', onBack);
+el.whyBtn.addEventListener('click', () => {
+  el.details.hidden = !el.details.hidden;
+  if (!el.details.hidden) renderDetails();
+});
+el.feedback.addEventListener('click', (e) => {
+  const fb = e.target.dataset?.fb;
+  if (fb === 'yes') sendFeedback(params.classification);
+  else if (fb === 'no') { el.feedback.hidden = true; el.feedbackFix.hidden = false; }
+});
+el.feedbackFix.addEventListener('click', (e) => {
+  const label = e.target.dataset?.label;
+  if (label) sendFeedback(label);
+});
+loadExplanation();
 // Switching away resets the timer in the background; re-sync on return so the UI shows the
 // fresh full countdown (and stops ticking while hidden).
 document.addEventListener('visibilitychange', () => {

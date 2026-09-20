@@ -8,9 +8,12 @@ import * as storage from '../storage/storage.js';
 import { DEFAULT_LIMITS, FRICTION_STATE } from '../storage/schema.js';
 import { RegexClassifier } from '../classifier/regexClassifier.js';
 import { EmbeddingClassifier } from '../classifier/embeddingClassifier.js';
-import { LLMClassifier } from '../classifier/llmClassifier.js';
+import { LlmClassifier } from '../llm/llmClassifier.js';
 import { LlmManager, createExtensionLlmLoader } from '../llm/llmManager.js';
-import { DuckDuckGoRetriever, DDG_ORIGIN_PATTERN } from '../retrieval/duckduckgo.js';
+import { OllamaAdapter, LlamaCppAdapter, runtimeModelVersion } from '../llm/localLLM.js';
+import { DuckDuckGoSearchProvider, DDG_ORIGIN_PATTERN } from '../search/duckduckgoProvider.js';
+import { SearchManager } from '../search/searchManager.js';
+import { DecisionPipeline } from '../intelligence/decisionPipeline.js';
 import { generateAnchors } from '../classifier/anchors.js';
 import { ModelManager, createExtensionLoader, MODEL_VERSION } from '../model/modelManager.js';
 import { PersistentCache, float32Codec } from '../storage/cacheStore.js';
@@ -54,8 +57,8 @@ async function boot() {
   const caches = {
     classification: new PersistentCache('classification', { log: cacheLog }),
     embedding: new PersistentCache('embedding', { log: cacheLog, ...float32Codec }),
-    // Reserved for a future DuckDuckGo/LLM layer; short TTL, see cacheStore.js.
     retrieval: new PersistentCache('retrieval', { log: cacheLog }),
+    llm: new PersistentCache('llm', { log: cacheLog }),
   };
   await storage.setValue('embeddingCache', undefined).catch(() => {}); // drop pre-cache-layer blob
 
@@ -66,29 +69,40 @@ async function boot() {
     modelVersion: MODEL_VERSION,
   });
 
+  // The LLM runtime is chosen from settings at load time (in-browser Transformers.js by
+  // default; Ollama / llama.cpp servers on localhost as alternatives). Tests may inject a loader.
   const llmManager = new LlmManager({
-    loader: globalThis.GOALGUARD_LLM_LOADER ?? createExtensionLlmLoader(browserApi.runtime),
+    loader: globalThis.GOALGUARD_LLM_LOADER ?? createRuntimeLoader(),
+    modelVersion: runtimeModelVersion(await storage.getSettings()),
   });
-  const retriever = new DuckDuckGoRetriever({
+  const searchManager = new SearchManager({
+    provider: new DuckDuckGoSearchProvider({
+      fetchImpl: globalThis.GOALGUARD_FETCH ?? globalThis.fetch?.bind(globalThis),
+      hasPermission: () => hasOriginPermission(DDG_ORIGIN_PATTERN),
+    }),
     cache: caches.retrieval,
-    fetchImpl: globalThis.GOALGUARD_FETCH ?? globalThis.fetch?.bind(globalThis),
-    hasPermission: () => hasOriginPermission(DDG_ORIGIN_PATTERN),
+    embed: (text) => modelManager.embed(text), // reranks snippets against the title
   });
+  const llmClassifier = new LlmClassifier({ llm: llmManager, cache: caches.llm });
 
-  const classifiers = [
-    new RegexClassifier(),
-    new EmbeddingClassifier({
+  const pipeline = new DecisionPipeline({
+    regex: new RegexClassifier(),
+    embedding: new EmbeddingClassifier({
       embed: (text) => modelManager.embed(text),
       isAvailable: () => modelManager.isAvailable(),
     }),
-    // Layer 3: only consulted for unconfident (questionable) embedding results, and only when
-    // the user enabled it in Options.
-    new LLMClassifier({ llm: llmManager, retriever }),
-  ];
+    search: searchManager,
+    llm: llmClassifier,
+  });
 
   const controller = new Controller({
-    classifiers,
+    pipeline,
     friction,
+    saveFeedback: async (entry) => {
+      const list = await storage.getValue('feedback', []);
+      list.push(entry);
+      await storage.setValue('feedback', list.slice(-DEFAULT_LIMITS.maxFeedbackEntries));
+    },
     sessions,
     classificationCache: caches.classification,
     modelVersion: () => MODEL_VERSION,
@@ -113,14 +127,31 @@ async function boot() {
   storage.onStorageChanged((changes) => {
     if (changes.settings || changes.rules || changes.anchors) {
       controller.invalidateConfig();
+      const next = changes.settings?.newValue;
+      const prev = changes.settings?.oldValue;
+      if (next && prev && (next.llmRuntime !== prev.llmRuntime || next.llmEndpoint !== prev.llmEndpoint || next.llmModelName !== prev.llmModelName)) {
+        // Next judgment loads the newly selected runtime under its own cache identity.
+        llmManager.configure({ modelVersion: runtimeModelVersion(next) }).then(() => llmManager.unload()).catch(() => {});
+      }
       tabMonitor.refreshActive().catch(() => {});
     }
   });
 
   browserApi.alarms.create(ALARM_TICK, { periodInMinutes: 1 });
 
-  app = { sessions, friction, modelManager, llmManager, retriever, controller, tabMonitor, caches };
+  app = { sessions, friction, modelManager, llmManager, searchManager, llmClassifier, pipeline, controller, tabMonitor, caches };
   return app;
+}
+
+/** Picks the LocalLLM adapter from settings when the model is first needed. */
+function createRuntimeLoader() {
+  const transformers = createExtensionLlmLoader(browserApi.runtime);
+  return async (onProgress) => {
+    const settings = await storage.getSettings();
+    if (settings.llmRuntime === 'ollama') return new OllamaAdapter({ endpoint: settings.llmEndpoint || undefined, model: settings.llmModelName || undefined });
+    if (settings.llmRuntime === 'llamacpp') return new LlamaCppAdapter({ endpoint: settings.llmEndpoint || undefined, model: settings.llmModelName || undefined });
+    return transformers(onProgress);
+  };
 }
 
 function ensureBooted() {
@@ -171,25 +202,65 @@ browserApi.alarms.onAlarm.addListener(async (alarm) => {
 // ---- Messages -------------------------------------------------------------------------------
 
 const router = createMessageRouter({
-  async getPopupState(_, sender) {
-    const { sessions, modelManager, controller } = await ensureBooted();
+  async getPopupState() {
+    const { sessions, modelManager, llmManager, searchManager, controller } = await ensureBooted();
     const settings = await storage.getSettings();
     const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
     let current = tab ? controller.getTabResult(tab.id) : null;
-    if (!current && tab?.url) current = await controller.handleActiveTab(tab).catch(() => null);
+    const analyzing = tab ? controller.getAnalyzing(tab.id) : null;
+    if (!current && tab?.url && !analyzing) {
+      // Do not block the popup on search/LLM: return quickly and let the popup poll.
+      const pending = controller.handleActiveTab(tab).catch(() => null);
+      current = await Promise.race([pending, sleep(300).then(() => null)]);
+    }
     const summary = await sessions.getSummary();
     return {
       settings,
-      current: current && !current.ignored ? sanitizeOutcome(current) : null,
+      current: current && !current.ignored ? sanitizeOutcome(current, settings.debugMode) : null,
+      analyzing: tab ? controller.getAnalyzing(tab.id) : null,
       tab: tab ? { title: tab.title, domain: extractDomain(tab.url) } : null,
       summary,
       model: modelManager.getStatus(),
+      ai: aiStatus({ llmManager, searchManager, settings, searchPermission: await hasOriginPermission(DDG_ORIGIN_PATTERN) }),
+    };
+  },
+
+  async submitFeedback(payload) {
+    const { controller } = await ensureBooted();
+    if (!['relevant', 'questionable', 'irrelevant'].includes(payload?.userLabel)) return { error: 'Invalid label' };
+    return controller.recordFeedback(payload);
+  },
+
+  async getFeedback() {
+    await ensureBooted();
+    return storage.getValue('feedback', []);
+  },
+
+  async clearFeedback() {
+    await ensureBooted();
+    await storage.setValue('feedback', []);
+  },
+
+  async getTelemetry() {
+    const { pipeline, searchManager, llmManager, llmClassifier, caches } = await ensureBooted();
+    return {
+      pipeline: pipeline.getTelemetry(),
+      search: searchManager.getStatus(),
+      llm: { ...llmManager.getStatus(), ...llmClassifier.getStats() },
+      caches: Object.fromEntries(Object.entries(caches).map(([k, c]) => [k, c.getStats()])),
     };
   },
 
   async classifyText({ title, url }) {
     const { controller } = await ensureBooted();
-    return sanitizeOutcome(await controller.classifyPage({ title, url: url || 'https://example.invalid/' }));
+    const settings = await storage.getSettings();
+    return sanitizeOutcome(await controller.classifyPage({ title, url: url || 'https://example.invalid/' }), settings.debugMode);
+  },
+
+  /** Full trace regardless of debug mode; used by the Options "Try a title" panel. */
+  async debugClassify({ title, url }) {
+    const { controller } = await ensureBooted();
+    return controller.classifyPage({ title, url: url || 'https://example.invalid/' });
   },
 
   async getFrictionState(payload) {
@@ -259,10 +330,12 @@ const router = createMessageRouter({
   },
 
   async getLayer3Status() {
-    const { llmManager, retriever } = await ensureBooted();
+    const { llmManager, searchManager } = await ensureBooted();
+    const settings = await storage.getSettings();
     return {
       llm: llmManager.getStatus(),
-      search: { ...retriever.getStatus(), permission: await hasOriginPermission(DDG_ORIGIN_PATTERN) },
+      search: { ...searchManager.getStatus(), permission: await hasOriginPermission(DDG_ORIGIN_PATTERN) },
+      ai: aiStatus({ llmManager, searchManager, settings, searchPermission: await hasOriginPermission(DDG_ORIGIN_PATTERN) }),
     };
   },
 
@@ -276,15 +349,17 @@ const router = createMessageRouter({
     return llmManager.getStatus();
   },
 
-  /** Direct probe of layer 3 for the Options "test" buttons; bypasses the confidence gate. */
-  async testLayer3({ title }) {
-    const { llmManager, retriever, controller } = await ensureBooted();
+  /** Direct probe of search + LLM for the Options "test" button; bypasses the confidence gate. */
+  async testLayer3({ title, domain }) {
+    const { llmClassifier, searchManager, controller } = await ensureBooted();
     const { settings } = await controller.getConfig();
     const out = { title };
-    if (settings.searchEnabled) out.retrieval = await retriever.search(title);
+    if (settings.searchEnabled) out.retrieval = await searchManager.search({ title, domain }, { maxResults: settings.searchMaxResults });
     if (settings.llmEnabled) {
       try {
-        out.verdict = await llmManager.judge({ goal: settings.weeklyGoal, title, retrieval: out.retrieval });
+        const { buildLlmPayload } = await import('../llm/promptBuilder.js');
+        out.verdict = await llmClassifier.judge(buildLlmPayload({ goal: settings.weeklyGoal, title, domain, webContext: out.retrieval?.results ?? [] }));
+        if (!out.verdict) out.llmError = 'Model did not return valid JSON';
       } catch (e) {
         out.llmError = String(e?.message ?? e);
       }
@@ -312,10 +387,12 @@ const router = createMessageRouter({
     return Object.fromEntries(Object.entries(caches).map(([k, c]) => [k, c.getStats()]));
   },
 
-  async clearCaches() {
+  async clearCaches({ namespaces } = {}) {
     const { caches, controller } = await ensureBooted();
-    await Promise.all(Object.values(caches).map((c) => c.clear()));
+    const targets = Array.isArray(namespaces) ? namespaces.filter((n) => caches[n]) : Object.keys(caches);
+    await Promise.all(targets.map((n) => caches[n].clear()));
     controller.invalidateConfig();
+    return { cleared: targets };
   },
 
   async revokeGrant({ domain }) {
@@ -338,11 +415,31 @@ const router = createMessageRouter({
 
 browserApi.runtime.onMessage.addListener(router);
 
-function sanitizeOutcome(outcome) {
+function sanitizeOutcome(outcome, debug = false) {
   if (!outcome) return null;
-  const { trace, ...rest } = outcome;
+  if (debug) return outcome;
+  const { trace, timings, ...rest } = outcome;
   return rest;
 }
+
+/** Compact "AI: local model ready / Semantic search: online" status for the popup. */
+function aiStatus({ llmManager, searchManager, settings, searchPermission }) {
+  const llm = llmManager.getStatus();
+  const search = searchManager.getStatus();
+  return {
+    embeddings: settings.embeddingsEnabled !== false,
+    llm: { enabled: Boolean(settings.llmEnabled), status: llm.status, model: llm.modelVersion, progress: llm.progress, error: llm.error },
+    search: {
+      enabled: Boolean(settings.searchEnabled),
+      permission: searchPermission,
+      online: typeof navigator === 'undefined' || navigator.onLine !== false,
+      lastError: search.lastError,
+      requests: search.requests,
+    },
+  };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- Lifecycle -------------------------------------------------------------------------------
 

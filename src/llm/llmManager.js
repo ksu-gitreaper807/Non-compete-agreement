@@ -1,22 +1,32 @@
 /**
- * Lazy single-instance lifecycle for the local LLM, mirroring ModelManager for embeddings.
- * Concurrent judgments for the same prompt share one in-flight generation.
+ * Lazy single-instance lifecycle for the local LLM (mirrors ModelManager for embeddings), plus:
+ *  - one in-flight completion per identical prompt (dedupe);
+ *  - per-call timeout;
+ *  - retry cool-down after a load failure;
+ *  - optional idle unload: the LLM is heavier than BGE, so it is released after `idleUnloadMs`
+ *    without a judgment (event-page termination releases it anyway).
  */
-import { loadLlmModel, LLM_MODEL_VERSION } from './llmModel.js';
-import { buildMessages, parseVerdict } from './prompt.js';
+import { loadTransformersJsLLM, LLM_MODEL_VERSION } from './localLLM.js';
+import { buildMessages } from './promptBuilder.js';
 import { hashString } from '../utils/text.js';
 
 export const LLM_STATUS = Object.freeze({ IDLE: 'idle', LOADING: 'loading', READY: 'ready', UNAVAILABLE: 'unavailable' });
 const RETRY_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_IDLE_UNLOAD_MS = 10 * 60 * 1000;
 
 export class LlmManager {
   /**
-   * @param {{ loader: () => Promise<{chat: Function}>, modelVersion?: string, timeoutMs?: number }} options
+   * @param {Object} options
+   * @param {(onProgress: Function) => Promise<import('./localLLM.js').LocalLLM>} options.loader
+   * @param {string} [options.modelVersion]
+   * @param {number} [options.timeoutMs]
+   * @param {number} [options.idleUnloadMs]  0 disables idle unloading
    */
-  constructor({ loader, modelVersion = LLM_MODEL_VERSION, timeoutMs = 20000 }) {
+  constructor({ loader, modelVersion = LLM_MODEL_VERSION, timeoutMs = 30000, idleUnloadMs = DEFAULT_IDLE_UNLOAD_MS }) {
     this.loader = loader;
     this.modelVersion = modelVersion;
     this.timeoutMs = timeoutMs;
+    this.idleUnloadMs = idleUnloadMs;
     this.status = LLM_STATUS.IDLE;
     this.error = null;
     this.progress = null;
@@ -24,8 +34,9 @@ export class LlmManager {
     this.loadPromise = null;
     this.lastFailureAt = 0;
     this.loadTimeMs = null;
+    this.idleTimer = null;
     this.inFlight = new Map();
-    this.stats = { judgments: 0, totalMs: 0, failures: 0, dedupeHits: 0 };
+    this.stats = { completions: 0, totalMs: 0, failures: 0, timeouts: 0, dedupeHits: 0 };
   }
 
   getStatus() {
@@ -35,10 +46,21 @@ export class LlmManager {
       error: this.error,
       progress: this.progress,
       loadTimeMs: this.loadTimeMs,
-      judgments: this.stats.judgments,
-      averageMs: this.stats.judgments ? Math.round(this.stats.totalMs / this.stats.judgments) : null,
+      completions: this.stats.completions,
+      averageMs: this.stats.completions ? Math.round(this.stats.totalMs / this.stats.completions) : null,
       failures: this.stats.failures,
+      timeouts: this.stats.timeouts,
     };
+  }
+
+  /** Switch runtime/model identity (cache keys) and drop any loaded model. */
+  async configure({ modelVersion }) {
+    if (modelVersion && modelVersion !== this.modelVersion) {
+      this.modelVersion = modelVersion;
+      await this.unload();
+      this.status = LLM_STATUS.IDLE;
+      this.error = null;
+    }
   }
 
   isAvailable() {
@@ -76,10 +98,12 @@ export class LlmManager {
   }
 
   /**
-   * @returns {Promise<{ classification: string, reason: string, raw: string }|null>}
+   * Run one completion for a structured payload; identical concurrent payloads share a call.
+   * @param {import('./promptBuilder.js').LlmPayload} payload
+   * @returns {Promise<{ raw: string, latencyMs: number }>}
    */
-  async judge(input) {
-    const messages = buildMessages(input);
+  async complete(payload) {
+    const messages = buildMessages(payload);
     const key = hashString(JSON.stringify(messages));
     if (this.inFlight.has(key)) {
       this.stats.dedupeHits++;
@@ -87,17 +111,21 @@ export class LlmManager {
     }
     const promise = (async () => {
       const model = await this.ensureLoaded();
+      this.clearIdleTimer();
       const started = performance.now();
       try {
-        const raw = await withTimeout(model.chat(messages), this.timeoutMs, 'LLM generation timed out');
-        this.stats.judgments++;
-        this.stats.totalMs += performance.now() - started;
-        const verdict = parseVerdict(raw);
-        return verdict ? { ...verdict, raw } : null;
+        const raw = await withTimeout(model.complete(messages), this.timeoutMs, 'LLM generation timed out');
+        const latencyMs = performance.now() - started;
+        this.stats.completions++;
+        this.stats.totalMs += latencyMs;
+        return { raw, latencyMs: Math.round(latencyMs) };
       } catch (e) {
         this.stats.failures++;
+        if (/timed out/.test(String(e?.message))) this.stats.timeouts++;
         this.error = String(e?.message ?? e);
         throw e;
+      } finally {
+        this.scheduleIdleUnload();
       }
     })();
     this.inFlight.set(key, promise);
@@ -108,7 +136,20 @@ export class LlmManager {
     }
   }
 
+  scheduleIdleUnload() {
+    this.clearIdleTimer();
+    if (!this.idleUnloadMs || !this.model) return;
+    this.idleTimer = setTimeout(() => this.unload().catch(() => {}), this.idleUnloadMs);
+    this.idleTimer.unref?.();
+  }
+
+  clearIdleTimer() {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+  }
+
   async unload() {
+    this.clearIdleTimer();
     if (this.model) await this.model.dispose?.();
     this.model = null;
     this.status = LLM_STATUS.IDLE;
@@ -125,7 +166,7 @@ function withTimeout(promise, ms, message) {
 
 export function createExtensionLlmLoader(runtime) {
   return (onProgress) =>
-    loadLlmModel({
+    loadTransformersJsLLM({
       transformersUrl: runtime.getURL('vendor/transformers.min.js'),
       wasmUrl: runtime.getURL('vendor/ort/'),
       onProgress,

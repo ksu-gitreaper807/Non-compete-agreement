@@ -22,7 +22,8 @@ const DAY = 24 * HOUR;
 export const CACHE_DEFAULTS = Object.freeze({
   classification: { ttlMs: 7 * DAY, maxEntries: 2000 },
   embedding: { ttlMs: 30 * DAY, maxEntries: 500 },
-  retrieval: { ttlMs: 6 * HOUR, maxEntries: 300 },
+  retrieval: { ttlMs: 24 * HOUR, maxEntries: 300 },
+  llm: { ttlMs: 7 * DAY, maxEntries: 1000 },
 });
 
 export const FINAL_CLASSIFICATION_TTL = CACHE_DEFAULTS.classification.ttlMs;

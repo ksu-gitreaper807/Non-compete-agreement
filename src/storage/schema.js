@@ -57,11 +57,23 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // Behaviour when the semantic model cannot run
   fallbackClassification: 'unknown',
 
-  // Layer 3 (opt-in). llmEnabled: local LLM judges QUESTIONABLE pages; searchEnabled: fetch
-  // DuckDuckGo context for the LLM (the only network call besides the one-time model download).
-  llmEnabled: false,
-  searchEnabled: false,
+  // AI layers (all opt-in except embeddings). See docs/CLASSIFICATION.md.
+  embeddingsEnabled: true,
+  llmEnabled: false,          // local LLM judges pages the cheaper layers could not decide
+  searchEnabled: false,       // fetch web context (page title only) for the LLM
+  searchMode: 'ambiguous',    // 'uncertain' = every questionable page | 'ambiguous' = only generic/low-information titles
+  searchMaxResults: 5,        // 1..10
+  searchCacheHours: 24,       // 1..168
+  llmRuntime: 'transformers', // 'transformers' (in-browser) | 'ollama' | 'llamacpp' (localhost servers)
+  llmEndpoint: '',            // localhost URL for ollama/llamacpp; empty = adapter default
+  llmModelName: '',           // model tag for ollama/llamacpp; empty = adapter default
+  llmMinConfidence: 0.6,      // below this the LLM verdict is downgraded to questionable
+  debugMode: false,           // show per-classification trace in the popup
 });
+
+export const SEARCH_MODE = Object.freeze({ UNCERTAIN: 'uncertain', AMBIGUOUS: 'ambiguous' });
+export const EVIDENCE_QUALITY = Object.freeze({ HIGH: 'high', MEDIUM: 'medium', LOW: 'low', NONE: 'none' });
+export const SOURCE = Object.freeze({ EXPLICIT_RULE: 'explicit_rule', REGEX: 'regex', EMBEDDING: 'embedding', LOCAL_LLM: 'local_llm', FALLBACK: 'fallback' });
 
 export const DEFAULT_RULES = Object.freeze({
   allow: [],
@@ -91,6 +103,7 @@ export const DEFAULT_LIMITS = Object.freeze({
   classificationCacheEntries: 1000,
   maxSessions: 2000,
   sessionRetentionDays: 14,
+  maxFeedbackEntries: 2000,
 });
 
 export function createDefaultState() {

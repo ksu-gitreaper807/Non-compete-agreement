@@ -55,8 +55,9 @@ export function makeResult(classification, source, reason, extra = {}) {
 }
 
 /**
- * Runs classifiers in order and returns the first non-null result. Any classifier that
- * throws is skipped so a failing model can never break browsing.
+ * Minimal sequential runner: first non-null result wins; throwing classifiers are skipped.
+ * The extension itself uses `intelligence/decisionPipeline.js` (which adds search/LLM gating
+ * and evidence handling); this class remains for simple compositions in tools and tests.
  */
 export class ClassifierPipeline {
   constructor(classifiers, { fallback } = {}) {

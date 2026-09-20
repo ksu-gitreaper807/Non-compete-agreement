@@ -6,7 +6,8 @@ import { hashString, normalizeTitleForKey } from '../utils/text.js';
 
 export const CLASSIFICATION_KEY_VERSION = 'v1';
 export const EMBEDDING_KEY_VERSION = 'v1';
-export const RETRIEVAL_KEY_VERSION = 'v1';
+export const RETRIEVAL_KEY_VERSION = 'v2'; // v2: results carry url + relevance
+export const LLM_KEY_VERSION = 'v1';
 
 /**
  * Fingerprint of everything a final classification depends on besides the page itself:
@@ -22,6 +23,8 @@ export function classificationConfigFingerprint({ settings, rules, anchors, mode
       settings?.questionableThreshold,
       Boolean(settings?.llmEnabled),
       Boolean(settings?.searchEnabled),
+      settings?.searchMode ?? '',
+      settings?.llmRuntime ?? '',
       settings?.allowedDomains ?? [],
       settings?.blockedDomains ?? [],
       rules?.allow ?? [],
@@ -45,4 +48,9 @@ export function embeddingKey({ modelVersion, text }) {
 /** `ret:v1:<provider>:<normalised query>` */
 export function retrievalKey({ provider, query }) {
   return `ret:${RETRIEVAL_KEY_VERSION}:${provider}:${normalizeTitleForKey(query)}`;
+}
+
+/** `llm:v1:<model>:<hash(goal|title|domain|context)>` — one verdict per page *and* context. */
+export function llmKey({ modelVersion, goal, title, domain, contextVersion }) {
+  return `llm:${LLM_KEY_VERSION}:${modelVersion}:${hashString([goal, normalizeTitleForKey(title), (domain ?? '').toLowerCase(), contextVersion ?? ''].join('\u0000'))}`;
 }

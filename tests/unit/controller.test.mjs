@@ -5,6 +5,7 @@ import { FrictionManager } from '../../src/blocking/frictionManager.js';
 import { RegexClassifier } from '../../src/classifier/regexClassifier.js';
 import { Classifier, makeResult } from '../../src/classifier/classifier.js';
 import { DEFAULT_SETTINGS, DEFAULT_ANCHORS } from '../../src/storage/schema.js';
+import { DecisionPipeline } from '../../src/intelligence/decisionPipeline.js';
 
 class StubSemantic extends Classifier {
   constructor(map) { super(); this.map = map; }
@@ -18,15 +19,24 @@ class FailingClassifier extends Classifier {
   get name() { return 'failing'; }
   async classify() { throw new Error('model exploded'); }
 }
+/** Embedding stage that first explodes (like an unloadable model) and then delegates. */
+class FlakyThen extends Classifier {
+  constructor(inner) { super(); this.inner = inner; this.failed = false; }
+  get name() { return 'embedding'; }
+  async classify(ctx) {
+    if (!this.failed) { this.failed = true; throw new Error('model exploded'); }
+    return this.inner.classify(ctx);
+  }
+}
 
-function make({ semantic, settings = {} } = {}) {
+function make({ semantic, settings = {}, pipelineDeps = {} } = {}) {
   let now = 1_000_000;
   const navigations = [];
   const sessionCalls = [];
   const friction = new FrictionManager({ load: async () => null, save: async () => {}, now: () => now });
   const sessions = { start: async (s) => sessionCalls.push(['start', s]), stop: async () => sessionCalls.push(['stop']) };
   const controller = new Controller({
-    classifiers: [new RegexClassifier(), new FailingClassifier(), semantic ?? new StubSemantic({})],
+    pipeline: new DecisionPipeline({ regex: new RegexClassifier(), embedding: semantic ?? new StubSemantic({}), ...pipelineDeps }),
     friction,
     sessions,
     loadConfig: async () => ({ settings: { ...DEFAULT_SETTINGS, weeklyGoal: 'Study operating systems and C++', ...settings }, rules: { allow: [], block: [] }, anchors: { ...DEFAULT_ANCHORS } }),
@@ -45,10 +55,12 @@ test('relevant page is allowed and tracked; classifier errors are skipped', asyn
   assert.equal(navigations.length, 0);
   assert.equal(sessionCalls.at(-1)[0], 'start');
   assert.equal(out.source, 'auto:allow');
-  // A title without goal terms reaches the failing classifier, which is skipped gracefully.
-  const out2 = await controller.handleActiveTab({ id: 11, url: 'https://example.org/x', title: 'Something else entirely' });
-  assert.ok(out2.trace.some((t) => t.classifier === 'failing' && t.error));
+  // A title without goal terms reaches a failing embedding stage, which is skipped gracefully.
+  const failing = make({ semantic: new FailingClassifier() });
+  const out2 = await failing.controller.handleActiveTab({ id: 11, url: 'https://example.org/x', title: 'Something else entirely' });
+  assert.ok(out2.trace.some((t) => t.stage === 'embedding' && t.error));
   assert.equal(out2.decision, 'allow');
+  assert.equal(out2.sourceKind, 'fallback');
 });
 
 test('irrelevant page redirects to friction page and starts a countdown', async () => {
@@ -127,17 +139,61 @@ test('classification results are cached per domain+text', async () => {
   assert.equal(second.cached, true);
 });
 
-test('unconfident results are passed to later classifiers as context.previous', async () => {
-  const { ClassifierPipeline } = await import('../../src/classifier/classifier.js');
-  class Tentative extends Classifier { get name() { return 't'; } async classify() { return makeResult('questionable', 'embedding', 'meh', { score: 0.5, confident: false }); } }
-  class Refiner extends Classifier { get name() { return 'llm'; } async classify(ctx) { return ctx.previous ? makeResult('relevant', 'llm', `refined ${ctx.previous.classification}`) : null; } }
-  const withRefiner = new ClassifierPipeline([new Tentative(), new Refiner()]);
-  const r1 = await withRefiner.classify({ text: 'x' });
+test('unconfident embedding results are passed to the LLM stage as context.previous', async () => {
+  class Tentative extends Classifier { get name() { return 'embedding'; } async classify() { return makeResult('questionable', 'embedding', 'meh', { score: 0.5, confident: false }); } }
+  class Refiner extends Classifier { get name() { return 'llm'; } async classify(ctx) { return ctx.previous ? makeResult('relevant', 'llm', `refined ${ctx.previous.classification}`, { confidence: 0.9 }) : null; } }
+  const withRefiner = new DecisionPipeline({ regex: new RegexClassifier(), embedding: new Tentative(), llm: new Refiner() });
+  const ctx = { text: 'Linus Torvalds kernel interview', title: 'Linus Torvalds kernel interview', url: 'https://a.com/', goal: 'g', rules: {}, anchors: {} };
+  const r1 = await withRefiner.classify({ ...ctx, settings: { ...DEFAULT_SETTINGS, llmEnabled: true } });
   assert.equal(r1.classification, 'relevant');
   assert.equal(r1.source, 'llm');
-  const without = new ClassifierPipeline([new Tentative()]);
-  const r2 = await without.classify({ text: 'x' });
+  assert.equal(r1.sourceKind, 'local_llm');
+  // A generic title with no web evidence cannot be promoted to a definite verdict.
+  const generic = await withRefiner.classify({ ...ctx, text: 'Episode 42', title: 'Episode 42', settings: { ...DEFAULT_SETTINGS, llmEnabled: true } });
+  assert.equal(generic.classification, 'questionable');
+  assert.equal(generic.downgraded, true);
+  assert.equal(generic.evidenceQuality, 'none');
+  const without = new DecisionPipeline({ regex: new RegexClassifier(), embedding: new Tentative() });
+  const r2 = await without.classify({ ...ctx, settings: DEFAULT_SETTINGS });
   assert.equal(r2.classification, 'questionable');
+  assert.equal(r2.sourceKind, 'embedding');
+});
+
+test('stale results are discarded when the tab navigates during classification', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  class Slow extends Classifier {
+    get name() { return 'embedding'; }
+    async classify({ text }) {
+      if (text === 'Slow page') { await gate; return makeResult('irrelevant', 'embedding', 'slow', { score: 0.1 }); }
+      return makeResult('relevant', 'embedding', 'fast', { score: 0.9 });
+    }
+  }
+  const { controller, navigations } = make({ semantic: new Slow() });
+  const first = controller.handleActiveTab({ id: 5, url: 'https://a.com/slow', title: 'Slow page' });
+  await new Promise((r) => setTimeout(r, 5));
+  const second = await controller.handleActiveTab({ id: 5, url: 'https://a.com/fast', title: 'Fast page' });
+  assert.equal(second.classification, 'relevant');
+  release();
+  const stale = await first;
+  assert.equal(stale.ignored, true);
+  assert.equal(stale.reason, 'stale');
+  assert.equal(navigations.length, 0, 'the stale irrelevant verdict must not redirect the tab');
+  assert.equal(controller.getTabResult(5).classification, 'relevant');
+});
+
+test('feedback is stored locally without the URL and evicts the cached decision', async () => {
+  const saved = [];
+  const semantic = new StubSemantic({ 'Episode 42': 'irrelevant' });
+  const { controller } = make({ semantic });
+  controller.deps.saveFeedback = async (e) => saved.push(e);
+  await controller.classifyPage({ url: 'https://pod.example/ep/42?utm_source=x', title: 'Episode 42' });
+  const entry = await controller.recordFeedback({ domain: 'pod.example', title: 'Episode 42', prediction: 'irrelevant', userLabel: 'relevant', source: 'embedding' });
+  assert.equal(saved.length, 1);
+  assert.equal(entry.userLabel, 'relevant');
+  assert.ok(!JSON.stringify(entry).includes('utm_source'));
+  const again = await controller.classifyPage({ url: 'https://pod.example/ep/42', title: 'Episode 42' });
+  assert.notEqual(again.cached, true);
 });
 
 

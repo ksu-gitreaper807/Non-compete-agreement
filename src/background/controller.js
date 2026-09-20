@@ -1,9 +1,13 @@
 /**
- * Orchestrates the per-tab pipeline: normalise → cache → regex → embedding → policy → friction.
+ * Orchestrates per-tab handling: normalise → decision cache → DecisionPipeline → policy → friction.
  * Pure of browser APIs (they are injected), so it can be exercised in tests.
+ *
+ * Race safety: every classification carries a per-tab request id and the (url, title) it was
+ * started for. Results that no longer match the tab's latest request are discarded and never
+ * navigate or start a countdown.
  */
 import { buildClassificationText, extractDomain, isSupportedUrl, normalizeTitle } from '../utils/text.js';
-import { ClassifierPipeline, makeResult } from '../classifier/classifier.js';
+import { makeResult } from '../classifier/classifier.js';
 import { decide, requiresFriction, DECISION } from '../classifier/policyEngine.js';
 import { CLASSIFICATION, FRICTION_STATE } from '../storage/schema.js';
 import { PersistentCache } from '../storage/cacheStore.js';
@@ -12,7 +16,7 @@ import { classificationKey, classificationConfigFingerprint } from '../storage/c
 export class Controller {
   /**
    * @param {Object} deps
-   * @param {import('../classifier/classifier.js').Classifier[]} deps.classifiers
+   * @param {import('../intelligence/decisionPipeline.js').DecisionPipeline} deps.pipeline
    * @param {import('../blocking/frictionManager.js').FrictionManager} deps.friction
    * @param {import('../background/sessionTracker.js').SessionTracker} deps.sessions
    * @param {() => Promise<{settings, rules, anchors}>} deps.loadConfig
@@ -21,18 +25,21 @@ export class Controller {
    * @param {(tabId: number) => Promise<boolean>} [deps.isBlockedPage]
    * @param {PersistentCache} [deps.classificationCache]  final-decision cache (persistent)
    * @param {() => string} [deps.modelVersion]             part of the cache fingerprint
+   * @param {(entry: Object) => Promise<void>} [deps.saveFeedback]
+   * @param {(tabId: number, state: Object|null) => void} [deps.onAnalyzing]  progressive UI hook
    */
   constructor(deps) {
     this.deps = deps;
-    this.pipeline = new ClassifierPipeline(deps.classifiers, {
-      fallback: () => makeResult(CLASSIFICATION.UNKNOWN, 'fallback', 'No signal available; allowed by default'),
-    });
+    this.pipeline = deps.pipeline;
     this.classificationCache = deps.classificationCache ?? new PersistentCache('classification', { persist: false });
     this.modelVersion = deps.modelVersion ?? (() => 'none');
     this.config = null;
     this.configFingerprint = null;
     this.tabResults = new Map(); // tabId -> last outcome (tab-scoped, not a classification cache)
     this.inFlight = new Map(); // tabId -> promise
+    this.latestRequest = new Map(); // tabId -> { id, url, title } of the newest classification request
+    this.analyzing = new Map(); // tabId -> stage while search/LLM run (for "Analyzing page…")
+    this.requestCounter = 0;
     this.activeTabId = null;
   }
 
@@ -57,8 +64,10 @@ export class Controller {
 
   /**
    * Classify a page without side effects (no friction, no session tracking).
+   * @param {{ url: string, title: string }} page
+   * @param {{ tabId?: number, requestId?: number }} [request]  for staleness checks / UI hooks
    */
-  async classifyPage({ url, title }) {
+  async classifyPage({ url, title }, request = {}) {
     const config = await this.getConfig();
     const { settings, rules, anchors } = config;
     const domain = extractDomain(url);
@@ -75,12 +84,43 @@ export class Controller {
 
     const context = { url, domain, title: normalizedTitle, text, goal, settings, rules, anchors };
     const key = classificationKey({ domain, text, fingerprint: this.configFingerprint });
-    const { value, cached, deduplicated } = await this.classificationCache.getOrCompute(key, async () => {
-      const result = await this.pipeline.classify(context);
-      const { trace, ...stored } = result; // trace is diagnostic; keep cached entries small
-      return { ...stored, domain, title: normalizedTitle, text, cachedAt: Date.now(), trace };
-    });
-    return cached ? { ...value, cached: true } : deduplicated ? { ...value, deduplicated: true } : value;
+    const { tabId, requestId } = request;
+    const tracked = typeof tabId === 'number' && typeof requestId === 'number';
+    const hooks = {
+      signal: tracked ? { controller: this, tabId, requestId, get stale() { return this.controller.isStale(this.tabId, this.requestId); } } : null,
+      onStage: (stage) => {
+        if (typeof tabId !== 'number') return;
+        this.analyzing.set(tabId, { stage, since: Date.now(), title: normalizedTitle, domain });
+        this.deps.onAnalyzing?.(tabId, this.analyzing.get(tabId));
+      },
+    };
+    try {
+      const { value, cached, deduplicated } = await this.classificationCache.getOrCompute(key, async () => {
+        const result = await this.pipeline.classify(context, hooks);
+        if (result.stale) return null; // never cache a result for an abandoned request
+        const { trace, webContext, ...stored } = result; // keep cached entries small
+        return { ...stored, webContext: (webContext ?? []).slice(0, 3), domain, title: normalizedTitle, text, cachedAt: Date.now(), trace };
+      });
+      if (value == null) return { ...makeResult(CLASSIFICATION.UNKNOWN, 'stale', 'Superseded'), stale: true, domain, title: normalizedTitle, text };
+      if (cached) this.pipeline.telemetry?.bump('cacheHits');
+      else this.pipeline.telemetry?.bump('classifications');
+      return cached ? { ...value, cached: true } : deduplicated ? { ...value, deduplicated: true } : value;
+    } finally {
+      if (typeof tabId === 'number' && this.analyzing.get(tabId)?.title === normalizedTitle) {
+        this.analyzing.delete(tabId);
+        this.deps.onAnalyzing?.(tabId, null);
+      }
+    }
+  }
+
+  isStale(tabId, requestId) {
+    const latest = this.latestRequest.get(tabId);
+    return !latest || latest.id !== requestId;
+  }
+
+  /** Progressive state for the popup while search/LLM run. */
+  getAnalyzing(tabId) {
+    return this.analyzing.get(tabId) ?? null;
   }
 
   /**
@@ -89,13 +129,22 @@ export class Controller {
    */
   async handleActiveTab(tab) {
     if (!tab || typeof tab.id !== 'number') return null;
-    if (this.inFlight.has(tab.id)) return this.inFlight.get(tab.id);
-    const promise = this.processTab(tab).finally(() => this.inFlight.delete(tab.id));
+    const normalizedTitle = normalizeTitle(tab.title);
+    const current = this.latestRequest.get(tab.id);
+    if (this.inFlight.has(tab.id) && current && current.url === tab.url && current.title === normalizedTitle) {
+      return this.inFlight.get(tab.id); // same page already being processed
+    }
+    // A newer page in the same tab supersedes any in-flight request for it.
+    const request = { id: ++this.requestCounter, url: tab.url, title: normalizedTitle };
+    this.latestRequest.set(tab.id, request);
+    const promise = this.processTab(tab, request).finally(() => {
+      if (this.inFlight.get(tab.id) === promise) this.inFlight.delete(tab.id);
+    });
     this.inFlight.set(tab.id, promise);
     return promise;
   }
 
-  async processTab(tab) {
+  async processTab(tab, request) {
     const { url, title, id: tabId } = tab;
     const config = await this.getConfig();
 
@@ -124,7 +173,12 @@ export class Controller {
     // timer never transfers to a materially different page).
     await this.deps.friction.abandonForTab(tabId, { exceptUrl: url });
 
-    const classification = await this.classifyPage({ url, title });
+    const classification = await this.classifyPage({ url, title }, { tabId, requestId: request.id });
+    if (classification.stale || this.isStale(tabId, request.id)) {
+      // The tab moved on (navigation or a newer title) while we were classifying.
+      this.pipeline.telemetry?.bump('stale');
+      return { ignored: true, reason: 'stale', tabId };
+    }
     const policy = decide(classification.classification, config.settings);
     const grant = await this.deps.friction.hasActiveGrant(domain);
 
@@ -272,6 +326,23 @@ export class Controller {
 
   forgetTab(tabId) {
     this.tabResults.delete(tabId);
+    this.latestRequest.delete(tabId);
+    this.analyzing.delete(tabId);
+  }
+
+  /**
+   * "Was this classification correct?" — stored locally for later threshold tuning. Only
+   * domain + title + labels are kept, never the URL. Also drops the cached decision so the
+   * next visit is re-evaluated.
+   */
+  async recordFeedback({ domain, title, prediction, userLabel, source }) {
+    const config = await this.getConfig();
+    const normalizedTitle = normalizeTitle(title);
+    const entry = { title: normalizedTitle.slice(0, 200), domain: String(domain ?? ''), goal: config.settings.weeklyGoal, prediction, userLabel, source: source ?? null, timestamp: Date.now() };
+    await this.deps.saveFeedback?.(entry);
+    await this.classificationCache.delete(classificationKey({ domain, text: normalizedTitle, fingerprint: this.configFingerprint }));
+    for (const [tabId, outcome] of this.tabResults) if (outcome.domain === domain && outcome.title === normalizedTitle) this.tabResults.delete(tabId);
+    return entry;
   }
 
   getTabResult(tabId) {

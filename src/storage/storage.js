@@ -93,6 +93,13 @@ function sanitizeSettings(patch) {
   if ('overrideMinutes' in out) out.overrideMinutes = num(out.overrideMinutes, 0.5, 1440, DEFAULT_SETTINGS.overrideMinutes);
   if ('weeklyTargetMinutes' in out) out.weeklyTargetMinutes = Math.round(num(out.weeklyTargetMinutes, 0, 100000, DEFAULT_SETTINGS.weeklyTargetMinutes));
   if ('weeklyGoal' in out) out.weeklyGoal = String(out.weeklyGoal ?? '').slice(0, 500);
+  if ('searchMaxResults' in out) out.searchMaxResults = Math.round(num(out.searchMaxResults, 1, 10, DEFAULT_SETTINGS.searchMaxResults));
+  if ('searchCacheHours' in out) out.searchCacheHours = Math.round(num(out.searchCacheHours, 1, 168, DEFAULT_SETTINGS.searchCacheHours));
+  if ('llmMinConfidence' in out) out.llmMinConfidence = num(out.llmMinConfidence, 0, 1, DEFAULT_SETTINGS.llmMinConfidence);
+  if ('searchMode' in out && !['uncertain', 'ambiguous'].includes(out.searchMode)) out.searchMode = DEFAULT_SETTINGS.searchMode;
+  if ('llmRuntime' in out && !['transformers', 'ollama', 'llamacpp'].includes(out.llmRuntime)) out.llmRuntime = DEFAULT_SETTINGS.llmRuntime;
+  if ('llmEndpoint' in out) out.llmEndpoint = String(out.llmEndpoint ?? '').trim().slice(0, 200);
+  if ('llmModelName' in out) out.llmModelName = String(out.llmModelName ?? '').trim().slice(0, 100);
   if ('allowedDomains' in out) out.allowedDomains = cleanList(out.allowedDomains);
   if ('blockedDomains' in out) out.blockedDomains = cleanList(out.blockedDomains);
   return out;

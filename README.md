@@ -79,12 +79,15 @@ goalguard/
 ├── src/
 │   ├── background/
 │   │   ├── background.js         wiring, message handlers, alarms, lifecycle
-│   │   ├── controller.js         per-tab pipeline (cache → classifiers → policy → friction)
+│   │   ├── controller.js         per-tab handling (cache → DecisionPipeline → policy → friction), race guards, feedback
 │   │   ├── tabMonitor.js         tabs/windows/idle listeners, debounce
 │   │   ├── sessionTracker.js     screen-time accounting, day buckets, session log
 │   │   └── messageRouter.js      runtime.onMessage dispatcher with error envelopes
+│   ├── intelligence/
+│   │   ├── decisionPipeline.js   THE central pipeline: rules → regex → BGE → [search] → [LLM] → evidence policy
+│   │   └── telemetry.js          local-only latency/counter stats (p50/p95 per stage)
 │   ├── classifier/
-│   │   ├── classifier.js         Classifier interface + ClassifierPipeline
+│   │   ├── classifier.js         Classifier interface (+ minimal sequential runner for tools)
 │   │   ├── regexClassifier.js    Layer 1 rules and precedence
 │   │   ├── embeddingClassifier.js Layer 2 similarity scoring + pure threshold function
 │   │   ├── anchors.js            goal → positive/negative anchor generation (local heuristics)
@@ -93,12 +96,19 @@ goalguard/
 │   ├── model/
 │   │   ├── embeddingModel.js     Transformers.js wrapper (CLS pooling, L2 normalise)
 │   │   └── modelManager.js       lazy load, single instance, LRU embedding cache, status
-│   ├── llm/                      OPTIONAL layer 3
-│   │   ├── llmModel.js           Transformers.js text-generation (Qwen2.5-0.5B-Instruct q4)
-│   │   ├── llmManager.js         lazy load, progress, timeout, in-flight dedupe
-│   │   └── prompt.js             chat prompt + verdict parsing
-│   ├── retrieval/
-│   │   └── duckduckgo.js         DuckDuckGo HTML search, parser, retrieval cache
+│   ├── search/                   OPTIONAL web-context layer (context retrieval, not a classifier)
+│   │   ├── searchProvider.js     SearchProvider interface + MockSearchProvider
+│   │   ├── duckduckgoProvider.js DuckDuckGo HTML endpoint provider + parser
+│   │   ├── queryBuilder.js       title → query, generic-title detection, URL sanitiser
+│   │   ├── resultParser.js       normalise/dedupe, rank (BGE or lexical), evidence grading
+│   │   ├── rateLimiter.js        min interval / per minute / per session
+│   │   └── searchManager.js      cache → rate limit → provider → parse; never throws
+│   ├── llm/                      OPTIONAL local-LLM layer
+│   │   ├── localLLM.js           LocalLLM interface + TransformersJs / Ollama / llama.cpp adapters
+│   │   ├── llmManager.js         lazy load, timeout, dedupe, idle unload, cool-down
+│   │   ├── promptBuilder.js      structured payload (goal, page, similarities, web context)
+│   │   ├── responseParser.js     strict JSON verdict validation + evidence grounding
+│   │   └── llmClassifier.js      Classifier over the above with its own verdict cache
 │   ├── blocking/
 │   │   ├── frictionManager.js    authoritative countdown / grant state machine
 │   │   └── blocker.js            friction page URL helpers
@@ -108,13 +118,13 @@ goalguard/
 │   │   ├── cacheStore.js         PersistentCache: TTL + LRU + debounced persistence + dedupe
 │   │   └── cacheKeys.js          versioned key builders and config fingerprint
 │   └── utils/  text.js · regex.js · lruCache.js
-├── popup/                        goal, current verdict, today's stats, weekly progress
-├── options/                      goal, thresholds, policy, friction, rules, anchors, model
+├── popup/                        goal, verdict, "Why?", feedback, AI status, debug trace
+├── options/                      goal, thresholds, policy, friction, rules, anchors, AI settings, caches, debug
 ├── blocking/                     friction page (blocked.html/js/css)
 ├── models/bge-small-en-v1.5/     tokenizer + int8 ONNX graph (bundled, ~34 MB)
 ├── vendor/                       transformers.min.js 2.17.2 + onnxruntime-web WASM
 ├── tests/  unit/ · model/ · integration/ · data/titles.json · helpers/
-├── scripts/  benchmark.mjs · check-manifest.mjs · package.mjs
+├── scripts/  benchmark.mjs · benchmark-layers.mjs · check-manifest.mjs · package.mjs
 └── docs/CLASSIFICATION.md        detailed algorithm documentation
 ```
 
@@ -156,7 +166,9 @@ Load the zip via **Load Temporary Add-on…**, or sign it through
 | `alarms` | flush screen time and expire temporary grants once a minute |
 | `idle` | stop counting screen time when you walk away |
 
-No host permissions, no content scripts, no network access.
+No required host permissions, no content scripts, no network access by default. Enabling the
+optional AI layers requests `optional_host_permissions` (Hugging Face for the one-time model
+download, `html.duckduckgo.com` for web context, `localhost` for an Ollama/llama.cpp runtime).
 
 ## Development
 
@@ -250,19 +262,30 @@ distraction topics (gaming, celebrity news, shopping, social feeds, …).
 Every result stores `classification`, `score`, `positiveSimilarity`, `negativeSimilarity`,
 `goalSimilarity`, `nearestPositive`, `nearestNegative`, `source` and `reason`.
 
-**Layer 3 — local LLM + DuckDuckGo context (opt-in)** (`llmClassifier.js`): runs only when
-Layer 2 returned `questionable` (`confident: false`) *and* the user enabled it in Options. If
-search is also enabled and the `html.duckduckgo.com` host permission was granted, the page
-**title only** is sent to DuckDuckGo and the top three results are added to the prompt. The LLM
-answers `RELEVANT | QUESTIONABLE | IRRELEVANT` + a reason; `source` becomes `llm` or
-`llm+search`, and the embedding score/similarities are kept on the result for transparency.
-Any failure (no weights, timeout, unparsable answer) returns `null` and the embedding verdict
-stands. Final decisions are cached like any other, so the LLM runs at most once per page title.
+**Layer 3 — web context (opt-in)** (`src/search/`): *context retrieval, not a classifier*.
+Reached only when Layer 2 was not confident and the LLM is enabled. `queryBuilder` turns the
+title into a query (title only; the domain is appended for generic titles like "Episode 42";
+the goal is never sent), `SearchManager` checks the 24 h retrieval cache, applies the rate
+limiter (≥2 s apart, ≤10/min, ≤300/session), calls the `SearchProvider` (DuckDuckGo HTML), and
+`resultParser` reduces the answer to ≤5 `{title, url, domain, snippet, relevance}` rows ranked by
+BGE similarity to the page title, with an `evidenceQuality` grade (`high|medium|low|none`).
+*Search on:* "only highly ambiguous titles" (default) or "all uncertain pages".
 
-Model: `onnx-community/Qwen2.5-0.5B-Instruct` (q4, ≈400 MB), downloaded once from Hugging Face
-into the browser's Cache storage on first use, then fully local. Qwen3-0.6B needs Transformers.js
-v3; swap `LLM_MODEL_ID` after upgrading `vendor/transformers.min.js`. Expect several seconds to
-load and roughly 1–3 s per judgment on CPU, which is why it is gated behind `questionable`.
+**Layer 4 — local LLM (opt-in)** (`src/llm/`): receives a structured JSON payload (goal, page
+title + domain, the three similarity numbers, web context) under a fixed system prompt and must
+answer strict JSON `{classification, confidence, reason, evidence}`. `responseParser` rejects
+anything else; evidence phrases not present in the supplied context are dropped. Verdicts are
+cached per (model, goal, title, domain, context) so a page costs one generation.
+
+**Evidence-aware finalisation** (`decisionPipeline.js`): the LLM's confidence is not trusted
+blindly — `confidence < llmMinConfidence` (0.6) or a definite verdict with `evidenceQuality:
+none` is downgraded to `questionable`. Every result records `source`, `sourceKind`
+(`explicit_rule | regex | embedding | local_llm | fallback`), `confidence`, `semanticScore`,
+`evidenceQuality`, `searchUsed` and per-stage `timings`.
+
+Runtimes: in-browser Transformers.js (`onnx-community/Qwen2.5-0.5B-Instruct` q4, ≈400 MB
+downloaded once; Qwen3-0.6B needs Transformers.js v3), or a **localhost** Ollama / llama.cpp
+server (e.g. `qwen3:0.6b`) — adapters refuse any non-local endpoint.
 
 **Policy engine** (`policyEngine.js`) maps classification → `allow | warn | block` and picks
 the friction duration. Defaults: relevant→allow, questionable→warn (short friction),
@@ -286,8 +309,8 @@ validated values**. Use *Options → Try a title* to inspect scores for your own
 
 ## Caching
 
-Three independent persistent caches (`src/storage/cacheStore.js`), each its own
-`storage.local` key (`cache:classification`, `cache:embedding`, `cache:retrieval`), loaded
+Four independent persistent caches (`src/storage/cacheStore.js`), each its own
+`storage.local` key (`cache:classification`, `cache:embedding`, `cache:retrieval`, `cache:llm`), loaded
 into memory once and written back debounced (3 s after a change; 15 s for recency-only
 updates; also flushed by the minute alarm).
 
@@ -295,7 +318,11 @@ updates; also flushed by the minute alarm).
 | --- | --- | --- | --- | --- |
 | `classification` | `cls:v1:<config-fingerprint>:<domain>:<normalised title>` | 7 days | 2000 | final result (classification, score, similarities, source, reason) |
 | `embedding` | `emb:v1:<model-version>:<hash(normalised title)>` | 30 days | 500 | Float32Array(384), stored as 4-decimal numbers |
-| `retrieval` | `ret:v1:ddg:<normalised query>` | 6 hours | 300 | DuckDuckGo results `{title, domain, snippet}[]` |
+| `retrieval` | `ret:v2:ddg:<normalised query>` | 24 hours (configurable) | 300 | `{query, timestamp, results: {title, url, domain, snippet}[]}` |
+| `llm` | `llm:v1:<model>:<hash(goal, title, domain, context)>` | 7 days | 1000 | parsed LLM verdict `{classification, confidence, reason, evidence}` |
+
+Options offers *Clear search cache* and *Clear AI classification cache* separately. Feedback
+entries (`feedback` key, ≤2000, domain + title + labels, no URL) are separate from caches.
 
 Constants live in `CACHE_DEFAULTS` (`FINAL_CLASSIFICATION_TTL`, `EMBEDDING_TTL`,
 `SEARCH_RESULT_TTL`, `MAX_*_CACHE_ENTRIES`).
@@ -456,7 +483,8 @@ goal,title,expected
 
 `tests/data/titles.json` holds 133 hand-labelled titles across six goals (operating systems,
 C++, mathematics, machine learning, fitness, reading) and three classes
-(60 relevant / 45 irrelevant / 28 ambiguous). `npm run benchmark` runs the real pipeline:
+(60 relevant / 45 irrelevant / 28 ambiguous, plus 20 generic-title rows used by the layer
+ablation below). `npm run benchmark` runs the regex + embedding layers:
 
 ```
 Three-way accuracy:          81.2%
@@ -483,17 +511,46 @@ Ambiguous titles are the weak spot (only ~35 % land in *questionable*; most are 
 *relevant* because they mention the topic). That is exactly the gap a future local LLM layer
 is meant to fill.
 
+### Layer ablation (`npm run benchmark:layers`)
+
+`scripts/benchmark-layers.mjs` runs the real `DecisionPipeline` in four configurations over the
+same dataset, now 153 titles including 20 deliberately generic ones ("Processes", "Episode 42",
+"Building Better Systems", …) each paired with a domain and hand-labelled. Web search is served
+offline from `tests/data/search-fixtures.json`; the LLM is by default a deterministic **mock that
+follows the prompt rules** (relevant only when the context shares goal terms, irrelevant on
+distraction terms, otherwise questionable), so the numbers measure the *pipeline*, not a model.
+Pass `--llm ollama --model qwen3:0.6b` with a local server to measure a real one.
+
+Result in this sandbox (searchMode=ambiguous, mock LLM):
+
+| config | 3-way acc. | generic-title acc. | block recall | block FNR | searches | LLM calls |
+| --- | --- | --- | --- | --- | --- | --- |
+| BGE only | 77.8% | 55.0% | 82.4% | 17.6% | 0 | 0 |
+| BGE + search | 77.8% | 55.0% | 82.4% | 17.6% | 10 | 0 |
+| BGE + LLM | 77.8% | 55.0% | 82.4% | 17.6% | 0 | 25 |
+| BGE + search + LLM | **79.1%** | **65.0%** | **86.3%** | **13.7%** | 10 | 25 |
+
+Block precision stayed at 100% (no relevant page newly blocked) in all four. Takeaways:
+search without an LLM cannot change verdicts (nothing consumes the context); the LLM without
+context correctly refuses to guess (its verdicts are downgraded to questionable because
+evidence is `none`); only the combination moves generic titles, and only modestly. 25 of 153
+titles (16%) reached the expensive layers. Treat this as a pipeline sanity check — the
+mock is not a language model and the fixtures were written by the author.
+
 ## Known limitations
 
 * **English only.** BGE-small-en is an English model; other languages will score poorly.
 * **Title-only signal.** Pages with generic titles ("YouTube", "Home") are judged on the URL
   path; single-page apps that update titles late may be classified twice.
 * **Thresholds are heuristics** tuned on a 133-title set by the author; calibrate per user.
-* **Ambiguous content** skews relevant when the goal topic is mentioned (see benchmark);
-  layer 3 exists to fix this but its accuracy has not been benchmarked here, and its real
-  download/inference path could not be exercised in the sandbox (no network) — the tests use
-  an injected fake LLM and fake fetch.
-* **Layer 3 cost.** ≈400 MB one-time download, ~1 GB RAM while loaded, seconds per judgment.
+* **Ambiguous content** skews relevant when the goal topic is mentioned (see benchmark).
+  The search + LLM layers exist to fix this; `npm run benchmark:layers` measures the pipeline
+  with offline search fixtures and a rule-following mock LLM (see Benchmark). Real DuckDuckGo
+  HTML and real model inference could not be exercised in the development sandbox (no
+  network) — the integration tests inject a fake LLM and a fake `fetch`.
+* **LLM cost.** In-browser: ≈400 MB one-time download, ~1 GB RAM while loaded, seconds per
+  judgment (it is unloaded after 10 min idle). DuckDuckGo's HTML markup may change; the parser
+  then yields no results and the LLM simply runs without context.
 * **Memory.** The resident model costs roughly 150–200 MB while loaded; it is loaded lazily
   and only when a title reaches Layer 2.
 * **Friction, not DRM.** Private windows, other browsers, or disabling the add-on bypass it by
@@ -504,22 +561,23 @@ is meant to fill.
   the real model; manual verification in a desktop Firefox profile is still recommended
   before wider use (see Installation).
 
-## Using and verifying layer 3
+## Using and verifying the AI layers
 
-1. Options → **Ambiguity resolver** → tick *Use local LLM*; approve the Hugging Face permission.
-   Optionally tick *Fetch DuckDuckGo context* and approve `duckduckgo.com`.
+1. Options → **AI classification** → tick *Enable local LLM*; approve the permission Firefox
+   shows (Hugging Face for the in-browser runtime, or `localhost` for Ollama / llama.cpp).
+   Optionally tick *Enable semantic web search* and approve `html.duckduckgo.com`.
 2. Click **Download & load LLM now** (one-time, a few minutes) — the status line shows progress.
-3. Type an ambiguous title (e.g. `Linus Torvalds Interview`) in *Try a title* and press
-   **Test with the title above**: you see the DuckDuckGo results that were fetched (or
-   `cached: true`) and the LLM's raw answer + parsed verdict.
-4. Browse normally: results whose `source` is `llm` / `llm+search` in the popup came from
-   layer 3; `embedding` means layer 2 was confident and the LLM was skipped. The Caches panel
-   shows the `retrieval` namespace filling up; the layer-3 status line counts requests and
-   judgments.
+3. Type an ambiguous title (e.g. `Building Better Systems`) in *Try a title* and press
+   **Classify** for the full trace (per-stage timings, search status/query/results, LLM JSON,
+   evidence quality, final source) or **Test search + LLM** to probe the two layers directly.
+4. Browse normally. The popup footer shows `● Local model ready` / `● Semantic search: online`;
+   `source` reads `llm` / `llm+search` for pages the LLM decided. Click **Why?** for the
+   explanation and answer **Correct? Yes/No** to store local feedback (exportable as JSON from
+   Options). Tick *Debug mode* to see the `TITLE / REGEX / BGE / SEARCH / LLM / FINAL / TOTAL`
+   block in the popup.
 
-The `Classifier` interface (`src/classifier/classifier.js`) is unchanged, so another backend
-(e.g. a native-messaging host running llama.cpp) only has to implement `chat(messages)` and be
-passed to `LlmManager`.
+To use Qwen3-0.6B today: `ollama pull qwen3:0.6b`, choose *Ollama on localhost* as runtime, and
+leave endpoint/model empty (defaults to `http://localhost:11434`, `qwen3:0.6b`).
 
 ## Acknowledgements
 

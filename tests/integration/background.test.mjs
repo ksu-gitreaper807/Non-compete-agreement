@@ -23,7 +23,15 @@ before(async () => {
   globalThis.GOALGUARD_MODEL_LOADER = loadNodeModel;
   globalThis.llmChats = 0;
   globalThis.ddgCalls = [];
-  globalThis.GOALGUARD_LLM_LOADER = async () => ({ chat: async (msgs) => { globalThis.llmChats++; return msgs[1].content.includes('Web context') ? 'RELEVANT. The interview is about Linux kernel development.' : 'IRRELEVANT. Looks like celebrity content.'; } });
+  globalThis.GOALGUARD_LLM_LOADER = async () => ({
+    complete: async (msgs) => {
+      globalThis.llmChats++;
+      const payload = JSON.parse(msgs[1].content);
+      return payload.webContext
+        ? JSON.stringify({ classification: 'relevant', confidence: 0.9, reason: 'The interview is about Linux kernel development.', evidence: ['Linux kernel'] })
+        : JSON.stringify({ classification: 'irrelevant', confidence: 0.8, reason: 'Looks like celebrity content.', evidence: [] });
+    },
+  });
   globalThis.GOALGUARD_FETCH = async (url) => { globalThis.ddgCalls.push(url); return { ok: true, status: 200, text: async () => (await import('node:fs')).readFileSync(new URL('../data/ddg-sample.html', import.meta.url), 'utf8') }; };
   await import('../../src/background/background.js');
   await sleep(100);
@@ -208,7 +216,10 @@ test('LLM enabled: questionable pages get a final LLM verdict; relevant pages ne
   await sleep(50);
   const r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
   assert.equal(r.source, 'llm', JSON.stringify(r));
+  assert.equal(r.sourceKind, 'local_llm');
   assert.equal(r.classification, 'irrelevant');
+  assert.equal(r.confidence, 0.8);
+  assert.equal(r.evidenceQuality, 'low');
   assert.equal(globalThis.llmChats, 1);
   const cached = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=other' });
   assert.equal(cached.cached, true);
@@ -220,7 +231,7 @@ test('LLM enabled: questionable pages get a final LLM verdict; relevant pages ne
 });
 
 test('search enabled without host permission → LLM runs without context; with permission → llm+search and cached', async () => {
-  await h.sendMessage('saveSettings', { searchEnabled: true });
+  await h.sendMessage('saveSettings', { searchEnabled: true, searchMode: 'uncertain' });
   await sleep(50);
   let r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
   assert.equal(r.source, 'llm');
@@ -230,6 +241,9 @@ test('search enabled without host permission → LLM runs without context; with 
   r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
   assert.equal(r.source, 'llm+search', JSON.stringify(r));
   assert.equal(r.classification, 'relevant');
+  assert.equal(r.searchUsed, true);
+  assert.ok(r.webContext.length >= 1);
+  assert.ok(['medium', 'high'].includes(r.evidenceQuality), r.evidenceQuality);
   assert.equal(globalThis.ddgCalls.length, 1);
   assert.ok(globalThis.ddgCalls[0].includes(encodeURIComponent('Linus Torvalds Interview')));
   assert.ok(!globalThis.ddgCalls[0].includes('youtube'), 'URL never sent');
@@ -238,8 +252,41 @@ test('search enabled without host permission → LLM runs without context; with 
   assert.equal(globalThis.ddgCalls.length, 1);
   const stats = await h.sendMessage('getCacheStats');
   assert.ok(stats.retrieval.size >= 1);
+  assert.ok(stats.llm.size >= 1);
+  const tel = await h.sendMessage('getTelemetry');
+  assert.ok(tel.pipeline.counters.llmCalls >= 1);
+  assert.equal(tel.search.requests, 1);
   await h.sendMessage('saveSettings', { llmEnabled: false, searchEnabled: false });
   await sleep(50);
+});
+
+test('feedback is stored locally and debug mode exposes the trace', async () => {
+  await h.sendMessage('saveSettings', { debugMode: true });
+  await sleep(50);
+  const r = await h.sendMessage('classifyText', { title: 'Best Gaming PCs of 2026', url: 'https://pcmag.com/x' });
+  assert.ok(Array.isArray(r.trace) && r.trace.length >= 1);
+  assert.ok(typeof r.timings.totalMs === 'number');
+  const fb = await h.sendMessage('submitFeedback', { domain: 'pcmag.com', title: 'Best Gaming PCs of 2026', prediction: r.classification, userLabel: 'relevant', source: r.source });
+  assert.equal(fb.userLabel, 'relevant');
+  const list = await h.sendMessage('getFeedback');
+  assert.equal(list.length, 1);
+  assert.ok(!JSON.stringify(list).includes('pcmag.com/x'), 'URL is not stored');
+  assert.deepEqual(await h.sendMessage('submitFeedback', { userLabel: 'nope' }), { error: 'Invalid label' });
+  await h.sendMessage('clearFeedback');
+  assert.equal((await h.sendMessage('getFeedback')).length, 0);
+  await h.sendMessage('saveSettings', { debugMode: false });
+  const plain = await h.sendMessage('classifyText', { title: 'Best Gaming PCs of 2026', url: 'https://pcmag.com/x' });
+  assert.equal(plain.trace, undefined);
+});
+
+test('rapid tab switching: a slow page superseded by navigation never redirects', async () => {
+  const id = await h.openTab({ url: 'https://example.org/a', title: 'Random unclear thing number one' });
+  await h.navigateTab(id, { url: 'https://pages.cs.wisc.edu/~remzi/OSTEP/', title: 'OSTEP - Processes' });
+  await settle(600);
+  const state = await h.sendMessage('getPopupState');
+  assert.equal(state.current.classification, 'relevant');
+  assert.equal(state.current.title, 'OSTEP - Processes');
+  await h.browser.tabs.remove(id);
 });
 
 test('user allow rule overrides the semantic verdict', async () => {

@@ -130,24 +130,62 @@
     </section>
 
     <section>
-      <h2>Ambiguity resolver (optional)</h2>
-      <p class="help">Off by default. When the embedding model is unsure (a <em>questionable</em> verdict), a small local LLM can make the final call, optionally after fetching a few DuckDuckGo results for context. The LLM (~400 MB, Qwen2.5-0.5B-Instruct) is downloaded once from Hugging Face and then runs entirely on this computer.</p>
-      <label class="check"><input type="checkbox" id="llmEnabled" /> Use local LLM for questionable pages</label>
-      <label class="check"><input type="checkbox" id="searchEnabled" /> Fetch DuckDuckGo context for the LLM (sends the page <strong>title</strong> to duckduckgo.com — never the URL)</label>
-      <p class="help" id="permissionHint" hidden>Firefox will ask for permission to contact duckduckgo.com / huggingface.co when you enable these.</p>
+      <h2>AI classification</h2>
+      <p class="help">Layers run cheapest-first: your rules → built-in regex → local embeddings → (optional) web context → (optional) local LLM. The AI layers only run for pages the earlier layers could not decide, and never override your explicit rules. All inference is local.</p>
+      <label class="check"><input type="checkbox" id="embeddingsEnabled" /> Enable semantic embeddings (BGE-small, bundled)</label>
+      <label class="check"><input type="checkbox" id="llmEnabled" /> Enable local LLM for uncertain pages</label>
+      <label class="check"><input type="checkbox" id="searchEnabled" /> Enable semantic web search (DuckDuckGo receives the page <strong>title</strong>, sometimes the domain — never the URL, never your goal)</label>
+      <div class="row">
+        <label>Search on
+          <select id="searchMode">
+            <option value="ambiguous">Only highly ambiguous titles</option>
+            <option value="uncertain">All uncertain pages</option>
+          </select>
+        </label>
+        <label>Maximum search results <input id="searchMaxResults" type="number" min="1" max="10" step="1" /></label>
+        <label>Search cache (hours) <input id="searchCacheHours" type="number" min="1" max="168" step="1" /></label>
+      </div>
+      <div class="row">
+        <label>LLM runtime
+          <select id="llmRuntime">
+            <option value="transformers">In-browser (Qwen2.5-0.5B-Instruct, ~400 MB one-time download)</option>
+            <option value="ollama">Ollama on localhost</option>
+            <option value="llamacpp">llama.cpp server on localhost</option>
+          </select>
+        </label>
+        <label>Endpoint (localhost only) <input id="llmEndpoint" type="text" placeholder="http://localhost:11434" /></label>
+        <label>Model name <input id="llmModelName" type="text" placeholder="qwen3:0.6b" /></label>
+        <label>Minimum LLM confidence <input id="llmMinConfidence" type="number" min="0" max="1" step="0.05" /></label>
+      </div>
+      <p class="help">Verdicts below the minimum confidence, or without any usable evidence about the page, are downgraded to <em>questionable</em>. The in-browser runtime downloads weights from Hugging Face once (Firefox will ask for permission); Ollama/llama.cpp let you run Qwen3-0.6B or any other local model.</p>
       <p id="layer3Info">Status: —</p>
       <div class="row">
         <button id="warmUpLlm" type="button">Download &amp; load LLM now</button>
-        <button id="testLayer3" type="button">Test with the title above</button>
+        <button id="testLayer3" type="button">Test search + LLM with the title above</button>
       </div>
       <pre id="layer3Result"></pre>
     </section>
 
     <section>
-      <h2>Caches</h2>
-      <p class="help">Local caches of final decisions, title embeddings and (future) retrieval results. Entries expire and are bounded; keys include the model version and your current goal/thresholds/rules, so changing settings never reuses stale decisions.</p>
+      <h2>Caches &amp; feedback</h2>
+      <p class="help">Local caches of final decisions, title embeddings, search results and LLM verdicts. Entries expire and are bounded; keys include the model version and your goal/thresholds/rules, so changing settings never reuses stale decisions. Feedback ("was this correct?") is stored locally only.</p>
       <pre id="cacheStats">—</pre>
-      <button id="clearCaches" type="button">Clear caches</button>
+      <div class="row">
+        <button id="clearCaches" type="button">Clear all caches</button>
+        <button id="clearSearchCache" type="button">Clear search cache</button>
+        <button id="clearAiCache" type="button">Clear AI classification cache</button>
+        <button id="exportFeedback" type="button">Export feedback (JSON)</button>
+        <button id="clearFeedback" type="button">Clear feedback</button>
+      </div>
+      <p id="feedbackInfo" class="help"></p>
+    </section>
+
+    <section>
+      <h2>Debug</h2>
+      <label class="check"><input type="checkbox" id="debugMode" /> Debug mode (show per-page trace and latencies in the popup)</label>
+      <p class="help">Latency and counters below are measured locally and never transmitted.</p>
+      <pre id="telemetry">—</pre>
+      <button id="refreshTelemetry" type="button">Refresh</button>
     </section>
 
     <section class="danger">

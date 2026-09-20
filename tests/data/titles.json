@@ -796,5 +796,165 @@
     "goalKey": "read",
     "title": "Barnes & Noble store closures",
     "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Processes",
+    "domain": "pages.cs.wisc.edu",
+    "expected": "relevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Processes",
+    "domain": "linkedin.com",
+    "expected": "irrelevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Systems",
+    "domain": "mit.edu",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Architecture",
+    "domain": "archdaily.com",
+    "expected": "irrelevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Architecture",
+    "domain": "cs.cmu.edu",
+    "expected": "relevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "How It Works",
+    "domain": "howstuffworks.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Episode 42",
+    "domain": "podcasts.apple.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Complete Guide",
+    "domain": "medium.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Developer Interview",
+    "domain": "youtube.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Building Better Systems",
+    "domain": "infoq.com",
+    "expected": "relevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Building Better Systems",
+    "domain": "forbes.com",
+    "expected": "irrelevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Latest Update",
+    "domain": "store.epicgames.com",
+    "expected": "irrelevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Everything You Need to Know",
+    "domain": "buzzfeed.com",
+    "expected": "irrelevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Understanding the Future",
+    "domain": "ted.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Alex's Latest Interview",
+    "domain": "youtube.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "How I Built It",
+    "domain": "github.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Chapter 7",
+    "domain": "ostep.org",
+    "expected": "relevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Lecture 12",
+    "domain": "ocw.mit.edu",
+    "expected": "questionable",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Home",
+    "domain": "reddit.com",
+    "expected": "irrelevant",
+    "ambiguousTitle": true
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Untitled",
+    "domain": "docs.google.com",
+    "expected": "questionable",
+    "ambiguousTitle": true
   }
 ]

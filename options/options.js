@@ -31,15 +31,25 @@ async function load() {
   setRadio('override', s.overrideMinutes, 'overrideCustom');
   $('questionableFrictionMode').value = s.questionableFrictionMode;
   $('questionableFrictionSeconds').value = s.questionableFrictionSeconds;
+  $('embeddingsEnabled').checked = s.embeddingsEnabled !== false;
   $('llmEnabled').checked = Boolean(s.llmEnabled);
   $('searchEnabled').checked = Boolean(s.searchEnabled);
+  $('searchMode').value = s.searchMode;
+  $('searchMaxResults').value = s.searchMaxResults;
+  $('searchCacheHours').value = s.searchCacheHours;
+  $('llmRuntime').value = s.llmRuntime;
+  $('llmEndpoint').value = s.llmEndpoint ?? '';
+  $('llmModelName').value = s.llmModelName ?? '';
+  $('llmMinConfidence').value = s.llmMinConfidence;
+  $('debugMode').checked = Boolean(s.debugMode);
   $('anchorsPositive').value = state.anchors.positive.join('\n');
   $('anchorsNegative').value = state.anchors.negative.join('\n');
   for (const key of Object.keys(LIST_CONFIG)) renderList(key);
-  await Promise.all([refreshModel(), refreshGrants(), refreshCaches(), refreshLayer3()]);
+  await Promise.all([refreshModel(), refreshGrants(), refreshCaches(), refreshLayer3(), refreshTelemetry(), refreshFeedback()]);
 }
 
 const DDG_ORIGIN = 'https://html.duckduckgo.com/*';
+const LOCAL_ORIGINS = ['http://localhost/*', 'http://127.0.0.1/*'];
 const HF_ORIGINS = ['https://huggingface.co/*', 'https://cdn-lfs.huggingface.co/*', 'https://cdn-lfs-us-1.huggingface.co/*', 'https://cas-bridge.xethub.hf.co/*'];
 
 async function requestOrigins(origins) {
@@ -55,12 +65,33 @@ async function refreshLayer3() {
   const st = await send('getLayer3Status');
   if (!st || st.error) return;
   const llm = st.llm;
-  const parts = [`LLM: ${llm.status}${llm.status === 'loading' && llm.progress != null ? ` ${llm.progress}%` : ''}`];
+  const parts = [`LLM (${llm.modelVersion}): ${llm.status}${llm.status === 'loading' && llm.progress != null ? ` ${llm.progress}%` : ''}`];
   if (llm.loadTimeMs != null) parts.push(`loaded in ${Math.round(llm.loadTimeMs / 1000)} s`);
   if (llm.averageMs != null) parts.push(`${llm.averageMs} ms per judgment`);
   if (llm.error) parts.push(`error: ${llm.error}`);
-  parts.push(`Search: ${st.search.permission ? 'permitted' : 'no permission'}, ${st.search.requests} requests, ${st.search.cacheHits} cache hits${st.search.lastError ? `, last error: ${st.search.lastError}` : ''}`);
+  parts.push(`Search: ${st.search.permission ? 'permitted' : 'no permission'}, ${st.search.requests} requests, ${st.search.cacheHits} cache hits, ${st.search.rateLimiter?.rejected ?? 0} rate-limited${st.search.lastError ? `, last error: ${st.search.lastError}` : ''}`);
   $('layer3Info').textContent = parts.join(' · ');
+}
+
+async function refreshTelemetry() {
+  const t = await send('getTelemetry');
+  if (!t || t.error) return;
+  const st = (s) => `n=${s.count} mean=${s.meanMs ?? '-'}ms p50=${s.p50Ms ?? '-'}ms p95=${s.p95Ms ?? '-'}ms max=${s.maxMs ?? '-'}ms`;
+  const lines = [
+    `classifications ${t.pipeline.counters.classifications} · cache hits ${t.pipeline.counters.cacheHits} (rate ${t.pipeline.counters.cacheHitRate ?? '-'})`,
+    `searches ${t.pipeline.counters.searches} (cached ${t.pipeline.counters.searchCacheHits}) · LLM calls ${t.pipeline.counters.llmCalls} (cached ${t.pipeline.counters.llmCacheHits}) · downgraded ${t.pipeline.counters.downgraded} · stale ${t.pipeline.counters.stale}`,
+    `by source: ${Object.entries(t.pipeline.bySource).map(([k, v]) => `${k}=${v}`).join(', ') || '—'}`,
+    '',
+    ...Object.entries(t.pipeline.stages).map(([k, v]) => `${k.padEnd(10)} ${st(v)}`),
+  ];
+  $('telemetry').textContent = lines.join('\n');
+}
+
+async function refreshFeedback() {
+  const list = await send('getFeedback');
+  if (!Array.isArray(list)) return;
+  const wrong = list.filter((f) => f.prediction !== f.userLabel).length;
+  $('feedbackInfo').textContent = list.length ? `${list.length} feedback entries stored locally (${wrong} corrections).` : 'No feedback stored yet.';
 }
 
 async function refreshCaches() {
@@ -156,8 +187,17 @@ async function save() {
     overrideMinutes: readRadio('override', 'overrideCustom', 5),
     questionableFrictionMode: $('questionableFrictionMode').value,
     questionableFrictionSeconds: Number($('questionableFrictionSeconds').value),
+    embeddingsEnabled: $('embeddingsEnabled').checked,
     llmEnabled: $('llmEnabled').checked,
     searchEnabled: $('searchEnabled').checked,
+    searchMode: $('searchMode').value,
+    searchMaxResults: Number($('searchMaxResults').value),
+    searchCacheHours: Number($('searchCacheHours').value),
+    llmRuntime: $('llmRuntime').value,
+    llmEndpoint: $('llmEndpoint').value.trim(),
+    llmModelName: $('llmModelName').value.trim(),
+    llmMinConfidence: Number($('llmMinConfidence').value),
+    debugMode: $('debugMode').checked,
     allowedDomains: state.settings.allowedDomains,
     blockedDomains: state.settings.blockedDomains,
   };
@@ -238,20 +278,21 @@ $('warmUp').addEventListener('click', async () => {
   await send('warmUpModel');
   await refreshModel();
 });
-$('tryButton').addEventListener('click', async () => {
-  $('tryResult').textContent = 'Classifying… (loads the model on first use)';
-  const r = await send('classifyText', { title: $('tryTitle').value });
-  $('tryResult').textContent = JSON.stringify(r, null, 2);
-  refreshModel();
-});
 $('llmEnabled').addEventListener('change', async (e) => {
-  if (e.target.checked && !(await requestOrigins(HF_ORIGINS))) e.target.checked = false;
+  if (!e.target.checked) return;
+  const origins = $('llmRuntime').value === 'transformers' ? HF_ORIGINS : LOCAL_ORIGINS;
+  if (!(await requestOrigins(origins))) e.target.checked = false;
+});
+$('llmRuntime').addEventListener('change', () => {
+  const local = $('llmRuntime').value !== 'transformers';
+  $('llmEndpoint').disabled = !local;
+  $('llmModelName').disabled = !local;
 });
 $('searchEnabled').addEventListener('change', async (e) => {
   if (e.target.checked && !(await requestOrigins([DDG_ORIGIN]))) e.target.checked = false;
 });
 $('warmUpLlm').addEventListener('click', async () => {
-  if (!(await requestOrigins(HF_ORIGINS))) return;
+  if (!(await requestOrigins($('llmRuntime').value === 'transformers' ? HF_ORIGINS : LOCAL_ORIGINS))) return;
   await send('saveSettings', { llmEnabled: true });
   $('llmEnabled').checked = true;
   $('layer3Info').textContent = 'LLM: downloading… (this can take a few minutes the first time)';
@@ -263,14 +304,44 @@ $('warmUpLlm').addEventListener('click', async () => {
 $('testLayer3').addEventListener('click', async () => {
   const title = $('tryTitle').value.trim() || 'Linus Torvalds Interview';
   $('layer3Result').textContent = 'Running… (loads the LLM on first use)';
-  const r = await send('testLayer3', { title });
+  const r = await send('testLayer3', { title, domain: 'example.com' });
   $('layer3Result').textContent = JSON.stringify(r, null, 2);
   refreshLayer3();
+});
+$('tryButton').addEventListener('click', async () => {
+  $('tryResult').textContent = 'Classifying… (loads models on first use)';
+  const r = await send('debugClassify', { title: $('tryTitle').value });
+  $('tryResult').textContent = JSON.stringify(r, null, 2);
+  refreshModel();
+  refreshTelemetry();
 });
 $('clearCaches').addEventListener('click', async () => {
   await send('clearCaches');
   await refreshCaches();
 });
+$('clearSearchCache').addEventListener('click', async () => {
+  await send('clearCaches', { namespaces: ['retrieval'] });
+  await refreshCaches();
+});
+$('clearAiCache').addEventListener('click', async () => {
+  await send('clearCaches', { namespaces: ['classification', 'llm'] });
+  await refreshCaches();
+});
+$('exportFeedback').addEventListener('click', async () => {
+  const list = await send('getFeedback');
+  const blob = new Blob([JSON.stringify(list ?? [], null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'goalguard-feedback.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('clearFeedback').addEventListener('click', async () => {
+  if (!confirm('Delete all stored feedback?')) return;
+  await send('clearFeedback');
+  await refreshFeedback();
+});
+$('refreshTelemetry').addEventListener('click', refreshTelemetry);
 $('resetAll').addEventListener('click', async () => {
   if (!confirm('Delete all GoalGuard settings, rules and statistics?')) return;
   await send('resetAll');

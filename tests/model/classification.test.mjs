@@ -8,7 +8,7 @@ import { loadNodeModel } from '../helpers/nodeModel.mjs';
 import { ModelManager } from '../../src/model/modelManager.js';
 import { EmbeddingClassifier } from '../../src/classifier/embeddingClassifier.js';
 import { RegexClassifier } from '../../src/classifier/regexClassifier.js';
-import { ClassifierPipeline } from '../../src/classifier/classifier.js';
+import { DecisionPipeline } from '../../src/intelligence/decisionPipeline.js';
 import { generateAnchors } from '../../src/classifier/anchors.js';
 import { cosineSimilarity } from '../../src/classifier/similarity.js';
 import { DEFAULT_SETTINGS } from '../../src/storage/schema.js';
@@ -29,10 +29,10 @@ let pipeline;
 before(async () => {
   const model = await loadNodeModel();
   manager = new ModelManager({ loader: async () => model });
-  pipeline = new ClassifierPipeline([
-    new RegexClassifier(),
-    new EmbeddingClassifier({ embed: (t) => manager.embed(t), isAvailable: () => true }),
-  ]);
+  pipeline = new DecisionPipeline({
+    regex: new RegexClassifier(),
+    embedding: new EmbeddingClassifier({ embed: (t) => manager.embed(t), isAvailable: () => true }),
+  });
 });
 
 test('model produces normalised 384-d embeddings', async () => {

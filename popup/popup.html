@@ -28,6 +28,22 @@
     <p class="page-title" id="pageTitle">—</p>
     <p class="verdict" id="verdict"><span class="badge" id="badge">…</span> <span id="verdictText"></span></p>
     <p class="meta" id="meta"></p>
+    <div class="row" id="explainRow" hidden>
+      <button type="button" class="link" id="whyBtn">Why?</button>
+      <span class="feedback" id="feedback">
+        Correct?
+        <button type="button" data-fb="yes">Yes</button>
+        <button type="button" data-fb="no">No</button>
+      </span>
+      <span class="feedback" id="feedbackFix" hidden>
+        Actually:
+        <button type="button" data-label="relevant">relevant</button>
+        <button type="button" data-label="irrelevant">irrelevant</button>
+      </span>
+      <span class="meta" id="feedbackDone" hidden>Thanks — noted locally.</span>
+    </div>
+    <div class="explain" id="explain" hidden></div>
+    <pre class="debug" id="debug" hidden></pre>
   </section>
 
   <section class="block">
@@ -48,7 +64,11 @@
   </section>
 
   <footer class="bottom">
-    <span class="model" id="modelStatus">AI classifier: idle</span>
+    <span class="status">
+      <span class="model" id="modelStatus">AI classifier: idle</span>
+      <span class="model" id="llmStatus"></span>
+      <span class="model" id="searchStatus"></span>
+    </span>
     <a href="#" id="openOptions">Settings</a>
   </footer>
   <script type="module" src="popup.js"></script>

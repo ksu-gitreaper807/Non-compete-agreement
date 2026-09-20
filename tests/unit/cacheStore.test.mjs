@@ -34,7 +34,7 @@ test('stripTrackingParams removes utm/fbclid but keeps content params', () => {
 
 test('embedding and retrieval keys are versioned', () => {
   assert.notEqual(embeddingKey({ modelVersion: 'bge-v1', text: 'x' }), embeddingKey({ modelVersion: 'bge-v2', text: 'x' }));
-  assert.match(retrievalKey({ provider: 'ddg', query: 'C++  Tutorial' }), /^ret:v1:ddg:c\+\+ tutorial$/);
+  assert.match(retrievalKey({ provider: 'ddg', query: 'C++  Tutorial' }), /^ret:v2:ddg:c\+\+ tutorial$/);
 });
 
 test('config fingerprint changes with goal, thresholds, rules, anchors and model', () => {

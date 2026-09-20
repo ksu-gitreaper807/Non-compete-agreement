@@ -104,24 +104,85 @@ else                                          → irrelevant   confident
 `ModelManager.isAvailable()` returns false for five minutes after a load failure; the
 embedding classifier then returns `null`, the pipeline falls back to
 `unknown / source: fallback`, and the default policy allows the page. Any exception inside a
-classifier is caught by `ClassifierPipeline`, recorded in `trace`, and the next layer runs.
+stage is caught by `DecisionPipeline`, recorded in `trace`, and the next stage runs.
 
-## 2b. Layer 3 — local LLM with optional DuckDuckGo context (`classifier/llmClassifier.js`)
+## 2b. Layer 3 — web context (`search/`)
 
-Gate: `settings.llmEnabled && context.previous?.confident === false`. The pipeline supplies the
-embedding result as `previous` (see §6). Steps:
+Purpose: answer *"what is this page actually about?"* for the LLM. It is **not** a classifier
+and never changes a verdict on its own.
 
-1. If `settings.searchEnabled` and the `https://html.duckduckgo.com/*` permission is granted,
-   `DuckDuckGoRetriever.search(title)` → `retrieval` cache (`ret:v1:ddg:<query>`, 6 h) →
-   otherwise one GET of `html.duckduckgo.com/html/?q=<title>` (6 s timeout, credentials
-   omitted), parsed into ≤5 `{title, domain, snippet}`.
-2. `LlmManager.judge()` builds a chat prompt (goal, title, site, nearest anchors, ≤3 results),
-   generates ≤40 tokens greedily (20 s timeout), and parses the first verdict word.
-3. Result: `source: llm | llm+search`, classification from the LLM, embedding numbers copied
-   over, `confident: true`. `null` on any failure ⇒ embedding verdict is returned.
+Gate (`DecisionPipeline.shouldSearch`): LLM enabled ∧ `searchEnabled` ∧ (`searchMode ==
+'uncertain'` ∨ title is generic per `queryBuilder.isGenericTitle` ∨ the embedding layer failed).
 
-The final-classification cache key fingerprint includes `llmEnabled`/`searchEnabled`, so
-toggling the layer never serves a decision made under the other configuration.
+1. **Query** (`queryBuilder.buildSearchQuery`): site suffix stripped (`" - YouTube"`), ≤120
+   chars. The domain is appended only for generic titles (`"Episode 42 podcasts.apple.com"`).
+   The goal, URL, query string and any identifiers are never part of a query; `sanitizeUrl`
+   (origin + pathname) exists for any future URL-derived query.
+2. **Cache** (`ret:v2:<provider>:<normalised query>`, TTL `searchCacheHours`, default 24 h, 300
+   entries LRU): stores `{query, timestamp, results}`. Concurrent misses share one request.
+3. **Rate limiter** (`rateLimiter.js`): ≥2 s between requests, ≤10/min, ≤300 per background
+   session. Rejections surface as `status: 'rate-limited'` with empty results.
+4. **Provider** (`SearchProvider.search(query)`): `DuckDuckGoSearchProvider` GETs
+   `html.duckduckgo.com/html/?q=…` with `credentials: 'omit'`, 6 s timeout, parses
+   `result__a`/`result__snippet` blocks. `MockSearchProvider` serves fixtures for tests and
+   benchmarks. Adding a provider = implementing `name`, `isAvailable()`, `search()`.
+5. **Parsing/ranking** (`resultParser.js`): normalise to `{title, url, domain, snippet}`, dedupe
+   by domain+title, cap at 10 stored / `searchMaxResults` (default 5) returned, rank by BGE
+   cosine between the page title and `"title: snippet"` (lexical overlap when embeddings are
+   unavailable). `assessEvidence` grades `high` (≥2 strong matches with snippets), `medium`,
+   `low`, `none`.
+
+Output: `{status, query, results[], evidenceQuality, cached, latencyMs, usedDomain}`. Every
+failure mode (`unavailable`, `rate-limited`, `timeout`, `error`, `empty`, `skipped`) returns
+this shape with `results: []`; nothing throws into the pipeline.
+
+## 2c. Layer 4 — local LLM (`llm/`)
+
+Gate: `settings.llmEnabled` ∧ Layer 2 not confident (or unavailable) ∧ runtime not in
+cool-down.
+
+* **Payload** (`promptBuilder.buildLlmPayload`): `{goal, page: {title, domain}, semantic:
+  {goalSimilarity, positiveSimilarity, negativeSimilarity}, webContext: ≤5 × {title, domain,
+  snippet}}`. Nothing else — no URL, no history, no other tabs.
+* **Prompt** (`SYSTEM_PROMPT`): relevance-to-goal only, use supplied information only, answer
+  `questionable` when the context does not establish what the page is about, return only JSON.
+* **Runtime** (`localLLM.js`): `LocalLLM.complete(messages)`; adapters for in-extension
+  Transformers.js (greedy, ≤120 new tokens), Ollama (`/api/chat`, `format: json`) and llama.cpp
+  server (`/v1/chat/completions`, `response_format: json_object`). Non-localhost endpoints throw
+  at construction. `LlmManager` adds lazy load with progress, 30 s timeout, per-prompt in-flight
+  dedupe, 10-minute retry cool-down after a load failure and 10-minute idle unload.
+* **Parsing** (`responseParser.parseLlmResponse`): first balanced `{…}` (fences/`<think>`
+  stripped) → must have `classification ∈ {relevant, questionable, irrelevant}` and numeric
+  `confidence ∈ [0,1]`; `reason` ≤240 chars; `evidence` items are kept only if they appear
+  verbatim (case-insensitive) in the payload text, otherwise moved to `unsupportedEvidence`.
+  Anything else → `null` → embedding verdict stands (not cached, so a flaky answer is retried
+  next time).
+* **Cache** (`llm:v1:<model>:<hash(goal, title, domain, context digest)>`, 7 days, 1000): new
+  web context ⇒ new key.
+
+### Evidence-aware finalisation (`decisionPipeline.applyEvidencePolicy`)
+
+```
+evidenceQuality = search ran ? search.evidenceQuality : generic title ? none : low
+if only unsupported evidence          → confidence = min(confidence, 0.5)
+if classification ≠ questionable:
+   confidence < llmMinConfidence (0.6) → questionable   ("downgraded: confidence …")
+   evidenceQuality == none             → questionable   ("downgraded: no usable evidence")
+```
+
+Result fields: `source` (`llm` | `llm+search`), `sourceKind: local_llm`, `confidence`,
+`semanticScore`, `evidenceQuality`, `searchUsed`, `searchQuery`, `searchStatus`,
+`webContext` (≤3 rows kept in the cache), `downgraded`, `llm: {reason, evidence, model, cached,
+latencyMs}`, `timings: {regexMs, embeddingMs, searchMs, llmMs, totalMs}`.
+
+### Cost ordering and race safety
+
+Stages run strictly cheapest-first and later ones only when earlier ones were not confident:
+regex → embedding → cached search → fresh search → LLM. `Controller` tags every tab request
+with an id; the pipeline checks `signal.stale` between stages and stops early, and the
+controller discards any outcome whose request id is no longer the tab's latest (no navigation,
+no countdown from a stale verdict; stale results are never cached). While search/LLM run the
+popup shows *Analyzing page…* via `controller.getAnalyzing(tabId)`.
 
 ## 3. Policy (`classifier/policyEngine.js`)
 
@@ -183,21 +244,16 @@ BLOCKED ──startCountdown(tab)──► COUNTING_DOWN ──(now ≥ unlockAt
 Measured on the development machine (Node 22, x86-64, single WASM thread): model load
 ≈ 0.4 s, inference 6–9 ms per title, resident memory ≈ +195 MB RSS.
 
-## 6. Extending with an LLM
+## 6. Extending
 
-```js
-import { Classifier, makeResult } from './classifier.js';
-
-export class LLMClassifier extends Classifier {
-  get name() { return 'llm'; }
-  async classify(context) {
-    if (context.previous?.confident !== false) return null;   // only resolve ambiguity
-    const verdict = await this.model.judge({ goal: context.goal, title: context.text });
-    return makeResult(verdict.classification, 'llm', verdict.reason, { score: verdict.score });
-  }
-}
-```
-
-Register it after `EmbeddingClassifier` in `background/background.js`. `ClassifierPipeline`
-already treats results with `confident: false` as tentative: it passes them to the next layer
-as `context.previous` and only returns them if no later layer produces a confident result.
+* **Another search engine**: subclass `SearchProvider` (`src/search/searchProvider.js`) and pass
+  it to `SearchManager` in `background.js`.
+* **Another LLM runtime**: subclass `LocalLLM` (`src/llm/localLLM.js`) — implement
+  `complete(messages)` returning the raw text — and return it from the loader given to
+  `LlmManager`. Keep it local; `assertLocal` is there for HTTP adapters.
+* **Page-content extraction, rerankers, fine-tuned classifiers**: add a stage to
+  `DecisionPipeline`; do not add decision logic anywhere else (popup, friction page and the
+  benchmark all consume the pipeline's result).
+* **Feedback dataset**: `storage.local.feedback` (`{title, domain, goal, prediction, userLabel,
+  source, timestamp}`), exportable from Options, is the intended input for future threshold
+  tuning.
