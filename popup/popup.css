@@ -50,3 +50,13 @@ h2 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing
 .dot.busy { color: var(--warn); }
 .dot.bad { color: var(--bad); }
 .analyzing { color: var(--warn); }
+
+.h2-note { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.ledger-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.ledger-list li { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; }
+.ledger-list input { margin: 3px 0 0; }
+.ledger-list .txt { flex: 1; min-width: 0; }
+.ledger-list .intent { display: block; overflow-wrap: anywhere; }
+.ledger-list .dom { color: var(--muted); font-size: 11px; }
+.ledger-list li.here .dom { color: var(--ok); }
+.ledger-list .link { padding: 0 2px; }

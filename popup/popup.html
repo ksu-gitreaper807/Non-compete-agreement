@@ -46,6 +46,17 @@
     <pre class="debug" id="debug" hidden></pre>
   </section>
 
+  <section class="block" id="ledgerBlock">
+    <h2>Intent ledger <span id="ledgerSummary" class="h2-note"></span></h2>
+    <ul class="ledger-list" id="ledgerList"></ul>
+    <p class="meta" id="ledgerEmpty" hidden>No pending tasks. Write one on the pause page or below.</p>
+    <p class="meta" id="ledgerMore" hidden></p>
+    <form id="ledgerQuick" class="goal-form" autocomplete="off" hidden>
+      <input id="ledgerQuickIntent" type="text" maxlength="200" placeholder="Task for this site…" />
+      <button type="submit">Add</button>
+    </form>
+  </section>
+
   <section class="block">
     <h2>Today</h2>
     <table class="stats">
@@ -82,7 +93,7 @@
       <span class="model" id="llmStatus"></span>
       <span class="model" id="searchStatus"></span>
     </span>
-    <a href="#" id="openLedger">Ledger<span id="ledgerCount"></span></a>
+    <a href="#" id="openLedger">Ledger</a>
     <a href="#" id="openOptions">Settings</a>
   </footer>
   <script type="module" src="popup.js"></script>

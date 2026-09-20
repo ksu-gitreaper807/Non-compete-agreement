@@ -42,6 +42,14 @@ const SOURCE_LABELS = { explicit_rule: 'Your rule', regex: 'Built-in rule', embe
 
 function renderCurrent(state) {
   const { current, tab, settings, analyzing } = state;
+  lastTabUrl = tab?.url ?? null;
+  lastTabTitle = tab?.title ?? '';
+  const domainNow = tab?.domain ?? null;
+  if (domainNow !== currentDomain || !ledgerRendered) {
+    currentDomain = domainNow;
+    ledgerRendered = true;
+    renderLedger();
+  }
   $('pageTitle').textContent = tab?.title || '—';
   $('pageTitle').title = tab?.title || '';
   const badge = $('badge');
@@ -247,9 +255,78 @@ $('openLedger').addEventListener('click', (e) => {
   send('openLedgerPage').catch(() => {});
   window.close();
 });
-send('ledgerList', { status: ['pending', 'in_progress'] })
-  .then((r) => { if (r?.counts?.open) $('ledgerCount').textContent = ` (${r.counts.open})`; })
-  .catch(() => {});
+// ---- Intent ledger block -----------------------------------------------------------------------
+// Pending tasks, the current site's first. Complete = explicit click; Open = a normal tab that
+// goes through classification/friction like any other.
+const LEDGER_MAX_ROWS = 5;
+let currentDomain = null;
+let lastTabUrl = null;
+let lastTabTitle = '';
+let ledgerRendered = false;
+
+async function renderLedger() {
+  let r;
+  try {
+    r = await send('ledgerList', { status: ['pending', 'in_progress'] });
+  } catch {
+    return;
+  }
+  if (!r || r.error) return;
+  const entries = r.entries ?? [];
+  const here = currentDomain ? entries.filter((e) => e.domain === currentDomain) : [];
+  const rest = entries.filter((e) => !here.includes(e));
+  const ordered = [...here, ...rest.sort((a, b) => a.createdAt - b.createdAt)];
+  const shown = ordered.slice(0, LEDGER_MAX_ROWS);
+  $('ledgerSummary').textContent = entries.length ? `· ${entries.length} pending` : '';
+  $('ledgerEmpty').hidden = entries.length > 0;
+  $('ledgerMore').hidden = ordered.length <= LEDGER_MAX_ROWS;
+  if (ordered.length > LEDGER_MAX_ROWS) $('ledgerMore').textContent = `+${ordered.length - LEDGER_MAX_ROWS} more in the full ledger`;
+  $('ledgerQuick').hidden = !currentDomain;
+  if (currentDomain) $('ledgerQuickIntent').placeholder = `Task for ${currentDomain}…`;
+
+  const list = $('ledgerList');
+  list.innerHTML = '';
+  for (const e of shown) {
+    const li = document.createElement('li');
+    if (e.domain === currentDomain) li.classList.add('here');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.title = 'Mark complete';
+    cb.addEventListener('change', () => send('ledgerComplete', { id: e.id }).then(renderLedger).catch(() => {}));
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    const intent = document.createElement('span');
+    intent.className = 'intent';
+    intent.textContent = e.intent;
+    const dom = document.createElement('span');
+    dom.className = 'dom';
+    dom.textContent = e.domain === currentDomain ? `${e.domain} · this site` : e.domain;
+    txt.append(intent, dom);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'link';
+    open.textContent = 'Open';
+    open.title = 'Opens in a new tab (normal classification applies)';
+    open.addEventListener('click', () => send('ledgerOpen', { id: e.id }).then(() => window.close()).catch(() => {}));
+    li.append(cb, txt, open);
+    list.append(li);
+  }
+}
+
+$('ledgerQuick').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const intent = $('ledgerQuickIntent').value.trim();
+  if (!intent || !currentDomain) return;
+  try {
+    const { duplicate } = (await send('ledgerFindDuplicate', { domain: currentDomain, intent })) ?? {};
+    if (duplicate && !confirm(`You already have "${duplicate.intent}" for ${currentDomain}. Create another?`)) return;
+    await send('ledgerCreate', { domain: currentDomain, url: lastTabUrl, title: lastTabTitle, intent, source: 'popup' });
+    $('ledgerQuickIntent').value = '';
+    renderLedger();
+  } catch {
+    /* ignore */
+  }
+});
 
 $('openOptions').addEventListener('click', (e) => {
   e.preventDefault();

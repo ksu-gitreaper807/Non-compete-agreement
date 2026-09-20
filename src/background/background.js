@@ -25,7 +25,7 @@ import { createMessageRouter } from './messageRouter.js';
 import { LedgerManager } from '../ledger/ledgerManager.js';
 import { buildBlockedPageUrl, isBlockedPageUrl, BLOCKED_PAGE_PATH } from '../blocking/blocker.js';
 import { validatePattern } from '../utils/regex.js';
-import { extractDomain } from '../utils/text.js';
+import { extractDomain, isSupportedUrl } from '../utils/text.js';
 
 const browserApi = globalThis.browser ?? globalThis.chrome;
 const BLOCKED_BASE_URL = browserApi.runtime.getURL(BLOCKED_PAGE_PATH);
@@ -262,7 +262,7 @@ const router = createMessageRouter({
       settings,
       current: current && !current.ignored ? sanitizeOutcome(current, settings.debugMode) : null,
       analyzing: tab ? controller.getAnalyzing(tab.id) : null,
-      tab: tab ? { title: tab.title, domain: extractDomain(tab.url) } : null,
+      tab: tab ? { title: tab.title, domain: extractDomain(tab.url), url: isSupportedUrl(tab.url) ? tab.url : null } : null,
       summary,
       model: modelManager.getStatus(),
       ai: aiStatus({ llmManager, searchManager, settings, searchPermission: await hasOriginPermission(DDG_ORIGIN_PATTERN) }),
