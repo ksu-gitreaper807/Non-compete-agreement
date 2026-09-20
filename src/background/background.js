@@ -29,6 +29,8 @@ import { extractDomain } from '../utils/text.js';
 const browserApi = globalThis.browser ?? globalThis.chrome;
 const BLOCKED_BASE_URL = browserApi.runtime.getURL(BLOCKED_PAGE_PATH);
 const ALARM_TICK = 'goalguard-tick';
+const ALARM_EXPIRE_PREFIX = 'goalguard-expire:';
+const NEUTRAL_URL = 'about:newtab';
 const DEBUG_CACHE = false; // flip to see [CACHE] HIT/MISS/expired/evicted lines in the background console
 
 let bootPromise = null;
@@ -51,6 +53,11 @@ async function boot() {
     load: storage.getFrictionState,
     save: storage.saveFrictionState,
     onEvent: (event, payload) => sessions.recordEvent(event, payload).catch(() => {}),
+    // One alarm per grant, fired exactly at expiresAt; the minute tick is only a safety net.
+    scheduler: {
+      schedule: (key, when) => browserApi.alarms.create(ALARM_EXPIRE_PREFIX + key, { when }),
+      cancel: (key) => browserApi.alarms.clear(ALARM_EXPIRE_PREFIX + key).catch(() => {}),
+    },
   });
 
   const cacheLog = DEBUG_CACHE || globalThis.GOALGUARD_DEBUG_CACHE ? (line) => console.debug(line) : null;
@@ -119,6 +126,11 @@ async function boot() {
     },
     blockedPageUrl: (params) => buildBlockedPageUrl(BLOCKED_BASE_URL, params),
     isBlockedPage: (url) => isBlockedPageUrl(url, BLOCKED_BASE_URL),
+    getTab: (tabId) => browserApi.tabs.get(tabId).catch(() => null),
+    queryTabs: () => browserApi.tabs.query({}).catch(() => []),
+    closeTab: (tabId) => browserApi.tabs.remove(tabId).catch(() => {}),
+    pauseMedia: (tabId) => pauseMediaInTab(tabId),
+    neutralUrl: NEUTRAL_URL,
   });
 
   const tabMonitor = new TabMonitor({ browser: browserApi, controller });
@@ -186,20 +198,47 @@ async function ensureAnchors(settings, anchors) {
 // ---- Alarms: flush screen time and expire grants ------------------------------------------
 
 browserApi.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name.startsWith(ALARM_EXPIRE_PREFIX)) {
+    await expireGrant(alarm.name.slice(ALARM_EXPIRE_PREFIX.length));
+    return;
+  }
   if (alarm.name !== ALARM_TICK) return;
-  const { sessions, friction, controller, tabMonitor, caches } = await ensureBooted();
+  const { sessions, friction, caches } = await ensureBooted();
   await sessions.flush();
   for (const cache of Object.values(caches)) cache.flush().catch(() => {});
-  const before = new Set((await friction.listGrants()).map((g) => g.domain));
-  await friction.ensureLoaded();
-  friction.pruneExpired();
-  for (const domain of before) {
-    if (!friction.state.grants[domain]) {
-      await controller.onGrantExpired(domain);
-      await tabMonitor.reevaluateDomain(domain);
-    }
-  }
+  // Safety net: enforce any grant whose alarm was lost (e.g. cleared by the browser).
+  for (const grant of await friction.overdueGrants()) await expireGrant(grant.key);
 });
+
+/** Removes the grant and intervenes on the tab(s) it covered, if they are still on the site. */
+async function expireGrant(key) {
+  const { friction, controller, tabMonitor } = await ensureBooted();
+  const grant = await friction.expireGrant(key);
+  if (!grant) return;
+  try {
+    await controller.onGrantExpired(grant);
+  } catch (e) {
+    console.warn('[GoalGuard] expiry enforcement failed', e);
+  }
+  // Any other tab on the domain that stayed open is re-evaluated when it becomes active.
+  tabMonitor.reevaluateDomain(grant.domain).catch(() => {});
+}
+
+/**
+ * Best-effort: pause <video>/<audio> before the redirect so playback stops even if the
+ * navigation is slow. Requires the (optional) activeTab/host access; failure is ignored.
+ */
+async function pauseMediaInTab(tabId) {
+  if (!browserApi.scripting?.executeScript) return;
+  await browserApi.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: () => {
+      for (const m of document.querySelectorAll('video, audio')) {
+        try { m.pause(); } catch { /* cross-origin or detached */ }
+      }
+    },
+  });
+}
 
 // ---- Messages -------------------------------------------------------------------------------
 
@@ -270,9 +309,11 @@ const router = createMessageRouter({
     return controller.getFrictionView(payload);
   },
 
-  async continueFromFriction(payload) {
+  async continueFromFriction(payload, sender) {
     const { controller } = await ensureBooted();
-    return controller.continueFromFriction(payload);
+    // The sender tab is authoritative for tab/window identity; URL params are only a hint.
+    const tabId = sender?.tab?.id ?? payload.tabId;
+    return controller.continueFromFriction({ ...payload, tabId, windowId: sender?.tab?.windowId ?? null });
   },
 
   async leaveFriction(payload, sender) {
@@ -397,11 +438,11 @@ const router = createMessageRouter({
     return { cleared: targets };
   },
 
-  async revokeGrant({ domain }) {
-    const { friction, controller, tabMonitor } = await ensureBooted();
-    await friction.revokeGrant(domain);
-    await controller.onGrantExpired(domain);
-    await tabMonitor.reevaluateDomain(domain);
+  /** Manual revoke from the options page: enforced exactly like a natural expiry. */
+  async revokeGrant({ domain, key }) {
+    const { friction } = await ensureBooted();
+    const targets = (await friction.listGrants()).filter((g) => (key ? g.key === key : g.domain === domain));
+    for (const g of targets) await expireGrant(g.key);
   },
 
   async resetAll() {

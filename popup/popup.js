@@ -167,6 +167,7 @@ function renderStats(state) {
   $('wkOverrides').textContent = week.overrides;
   $('wkAbandoned').textContent = week.frictionAbandoned;
   $('wkResets').textContent = week.frictionReset ?? 0;
+  $('wkExpired').textContent = week.overrideExpired ?? 0;
   $('wkGranted').textContent = formatDuration(week.overrideGrantedMs ?? 0);
   $('wkOverrideTime').textContent = formatDuration(week.overrideMs);
 }

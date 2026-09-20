@@ -28,5 +28,7 @@ export function parseBlockedPageParams(search) {
     decision: p.get('decision') ?? 'block',
     score: p.has('score') && p.get('score') !== 'null' ? Number(p.get('score')) : null,
     tabId: Number.isFinite(tabId) ? tabId : null,
+    expired: p.get('expired') === '1',
+    usedMinutes: p.has('usedMinutes') ? Number(p.get('usedMinutes')) : null,
   };
 }

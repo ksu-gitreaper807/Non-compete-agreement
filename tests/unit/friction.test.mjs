@@ -182,3 +182,32 @@ test('spec §9.5 timeline: access timer starts at Continue, not at friction-page
   // Grant is domain-scoped: another domain is still blocked.
   assert.equal((await fm.getState({ tabId: 9, domain: 'reddit.com' })).state, 'BLOCKED');
 });
+
+test('grants arm an expiry alarm, expireGrant hands the grant back once, tab-scoped grants die with the tab', async () => {
+  const sched = { schedule: [], cancel: [] };
+  let store = null; let now = 1_000_000;
+  const fm = new FrictionManager({ load: async () => store, save: async (s) => { store = structuredClone(s); }, now: () => now, scheduler: { schedule: (k, w) => sched.schedule.push([k, w]), cancel: (k) => sched.cancel.push(k) } });
+  await fm.startCountdown({ ...page(1, 'yt.com'), frictionSeconds: 1 });
+  now += 1000;
+  const r = await fm.grantAccess({ tabId: 1, domain: 'yt.com', windowId: 7, overrideMinutes: 5, scope: 'tab' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(sched.schedule, [['yt.com|1', now + 5 * 60_000]]);
+  assert.equal(r.grant.windowId, 7);
+  // Other tabs on the same domain are NOT covered by a per-tab grant.
+  assert.equal((await fm.getState({ tabId: 2, domain: 'yt.com' })).state, 'BLOCKED');
+  assert.equal((await fm.getState({ tabId: 1, domain: 'yt.com' })).state, 'TEMPORARILY_ALLOWED');
+  // Alarms re-armed after a restart (event page restart).
+  const fm2 = new FrictionManager({ load: async () => store, save: async () => {}, now: () => now, scheduler: { schedule: (k, w) => sched.schedule.push(['re', k, w]), cancel: () => {} } });
+  await fm2.ensureLoaded();
+  assert.deepEqual(sched.schedule.at(-1), ['re', 'yt.com|1', now + 5 * 60_000]);
+  // Expiry
+  const g = await fm.expireGrant('yt.com|1');
+  assert.equal(g.domain, 'yt.com');
+  assert.equal(await fm.expireGrant('yt.com|1'), null, 'second delivery is a no-op');
+  assert.deepEqual(sched.cancel, ['yt.com|1']);
+  // Closing the tab drops a tab-scoped grant.
+  await fm.startCountdown({ ...page(3, 'yt.com'), frictionSeconds: 0 });
+  await fm.grantAccess({ tabId: 3, domain: 'yt.com', overrideMinutes: 5, scope: 'tab' });
+  await fm.onTabClosed(3);
+  assert.equal(await fm.hasActiveGrant('yt.com', 3), null);
+});

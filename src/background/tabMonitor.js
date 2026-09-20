@@ -27,7 +27,7 @@ export class TabMonitor {
     tabs.onRemoved.addListener((tabId) => {
       this.cancel(tabId);
       this.controller.forgetTab(tabId);
-      this.controller.deps.friction.abandonForTab(tabId).catch(() => {});
+      this.controller.deps.friction.onTabClosed(tabId).catch(() => {});
     });
     windows.onFocusChanged.addListener((windowId) => {
       if (windowId === windows.WINDOW_ID_NONE) {

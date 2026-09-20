@@ -163,7 +163,8 @@ Load the zip via **Load Temporary Add-on…**, or sign it through
 | --- | --- |
 | `tabs` | read the active tab's URL and title |
 | `storage`, `unlimitedStorage` | settings, statistics, embedding cache |
-| `alarms` | flush screen time and expire temporary grants once a minute |
+| `alarms` | one alarm per temporary grant (fires at `expiresAt`) + a minute tick to flush screen time |
+| `scripting` | pause `<video>/<audio>` in a tab whose access just expired (best effort) |
 | `idle` | stop counting screen time when you walk away |
 
 No required host permissions, no content scripts, no network access by default. Enabling the
@@ -370,11 +371,15 @@ now ≥ unlockAt → UNLOCKED                Continue enabled (2-minute grace wi
                                           no longer reset it — completion wins
    ▼
 Continue → grantAccess(tab, generation)  rejected unless now ≥ unlockAt AND generation is current
-                                          grant = { domain, grantedAt: now, expiresAt: now + overrideMinutes }
+                                          grant = { key, domain, tabId, windowId, grantedAt: now, expiresAt }
+                                          browser.alarms.create("goalguard-expire:<key>", { when: expiresAt })
    ▼
-TEMPORARILY_ALLOWED for that domain      time still counted as distraction + overrideMs
+TEMPORARILY_ALLOWED                      time still counted as distraction + overrideMs
    ▼
-expiry (alarm every minute)              open tabs on that domain re-enter friction
+alarm fires at expiresAt                 tab still exists? still on that domain? → enforce
+                                          (pause media → replace tab with "Time is up" page,
+                                           or close / redirect per `expiryAction`); otherwise
+                                          just clean up state. No click, switch or reload needed.
 ```
 
 Guarantees:
@@ -390,8 +395,17 @@ Guarantees:
   generation it saw; `grantAccess` refuses stale ones, so a callback from a timer that was reset
   milliseconds earlier cannot grant access. Completion is checked against the persisted
   `unlockAt`, so if the timer finished before the switch, the switch does not undo it.
-* **Domain scoped grants.** Grants are keyed by registrable host (`youtube.com` covers
-  `m.youtube.com`) and are independent of tabs.
+* **Scoped grants.** `overrideScope: 'tab'` (default) grants only the tab that waited
+  (`key = domain|tabId`); `'domain'` grants every tab on the registrable host (`youtube.com`
+  covers `m.youtube.com`). Tab-scoped grants are dropped when the tab closes.
+* **Automatic expiry.** Each grant arms one `browser.alarms` alarm for exactly `expiresAt`
+  (re-armed after an event-page restart; the one-minute tick is only a safety net for lost
+  alarms). On fire the background verifies the tab still exists *and* is still on the granted
+  domain before intervening, so a tab that moved on to GitHub is never touched. Enforcement is
+  configurable: replace with the friction page in its *"Time is up — wait again"* form
+  (default), redirect to a blank tab, or close the tab (opt-in, may lose unsaved work). A
+  best-effort `scripting.executeScript` pauses `<video>/<audio>` first; redirection remains
+  the primary mechanism.
 * **Go Back** cancels the countdown and records `frictionAbandoned` — never screen time.
 * **Questionable pages** use the same page in a visually distinct "warn" style with a
   relevance percentage; the policy decides `none | short | normal` friction.
@@ -404,7 +418,7 @@ Statistics per day: `frictionTriggered`, `frictionCompleted`, `frictionAbandoned
 ## Data model
 
 Day buckets track `frictionTriggered`, `frictionCompleted`, `frictionAbandoned`, `frictionReset`,
-`overrides`, `overrideGrantedMs` (access duration granted) and `overrideMs` (time actually spent
+`overrides`, `overrideGrantedMs` (access duration granted), `overrideExpired` (auto-enforced expiries) and `overrideMs` (time actually spent
 after overrides); the popup's *Friction this week* panel is built from these.
 
 ```jsonc
@@ -426,7 +440,7 @@ after overrides); the popup's *Friction this week* panel is built from these.
   "rules":   { "allow": ["\\bOSTEP\\b"], "block": ["\\bHelldivers\\b"] },
   "anchors": { "positive": ["operating systems", "virtual memory"], "negative": ["video games and gaming"], "generatedFromGoal": "…" },
   "friction": { "countdowns": { "3": { "tabId": 3, "domain": "pcmag.com", "url": "…", "generation": 7, "startedAt": 0, "unlockAt": 0 } },
-                "grants":     { "youtube.com": { "grantedAt": 0, "expiresAt": 0 } } },
+                "grants":     { "youtube.com|123": { "domain": "youtube.com", "tabId": 123, "grantedAt": 0, "expiresAt": 0 } } },
   "statistics": { "days": { "2026-09-20": { "relevantMs": 0, "irrelevantMs": 0, "overrideMs": 0, "frictionTriggered": 0, "overrides": 0 } } },
   "sessions": [ { "domain": "pcmag.com", "title": "Best Gaming PCs…", "classification": "irrelevant", "startedAt": 0, "endedAt": 0, "overridden": true } ],
   "currentSession": null,

@@ -41,6 +41,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   questionableFrictionMode: 'short', // 'none' | 'short' | 'normal'
   questionableFrictionSeconds: 5,
   overrideMinutes: 5,
+  overrideScope: 'tab', // 'tab' = only the tab that waited | 'domain' = every tab on the site
+  expiryAction: 'friction', // when access expires: 'friction' | 'close' | 'neutral'
 
   // Policy: classification -> decision
   policy: {
@@ -159,6 +161,7 @@ export function createDayStats() {
     frictionReset: 0,
     overrides: 0,
     overrideGrantedMs: 0,
+    overrideExpired: 0,
   };
 }
 

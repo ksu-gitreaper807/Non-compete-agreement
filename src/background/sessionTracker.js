@@ -151,6 +151,7 @@ export class SessionTracker {
       else if (event === 'frictionCompleted') day.frictionCompleted++;
       else if (event === 'frictionAbandoned') day.frictionAbandoned++;
       else if (event === 'frictionReset') day.frictionReset++;
+      else if (event === 'overrideExpired') day.overrideExpired++;
       else if (event === 'overrideGranted') {
         day.overrides++;
         day.overrideGrantedMs += Math.round((Number(payload.minutes) || 0) * 60000);

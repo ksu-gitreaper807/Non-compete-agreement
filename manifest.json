@@ -23,7 +23,8 @@
     "storage",
     "alarms",
     "idle",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "scripting"
   ],
   "background": {
     "scripts": [

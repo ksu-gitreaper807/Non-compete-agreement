@@ -78,7 +78,14 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
   };
 
   const windows = { WINDOW_ID_NONE: -1, onFocusChanged: makeEvent(), get: async (id) => ({ id, focused: true }) };
-  const alarms = { create: () => {}, onAlarm: makeEvent() };
+  const scheduled = new Map(); // name -> alarmInfo
+  const alarms = {
+    create: (name, info) => { scheduled.set(name, info); },
+    clear: async (name) => scheduled.delete(name),
+    onAlarm: makeEvent(),
+  };
+  const mediaPauses = [];
+  const scripting = { executeScript: async ({ target }) => { mediaPauses.push(target.tabId); return []; } };
   const idle = { onStateChanged: makeEvent(), setDetectionInterval: () => {} };
 
   const grantedOrigins = new Set();
@@ -86,7 +93,7 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
     contains: async ({ origins = [] }) => origins.every((o) => grantedOrigins.has(o)),
     request: async ({ origins = [] }) => { origins.forEach((o) => grantedOrigins.add(o)); return true; },
   };
-  const browser = { storage, runtime, tabs: tabsApi, windows, alarms, idle, permissions };
+  const browser = { storage, runtime, tabs: tabsApi, windows, alarms, idle, permissions, scripting };
 
   const harness = {
     browser,
@@ -121,6 +128,14 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
     tab: (id) => tabs.get(id),
     grantOrigin: (o) => grantedOrigins.add(o),
     tick: async () => alarms.onAlarm.emit({ name: 'goalguard-tick' }),
+    scheduledAlarms: () => new Map(scheduled),
+    mediaPauses,
+    /** Fire a scheduled alarm as the browser would when its `when` arrives. */
+    fireAlarm: async (name) => {
+      const info = scheduled.get(name);
+      scheduled.delete(name);
+      await alarms.onAlarm.emit({ name, scheduledTime: info?.when ?? Date.now() });
+    },
   };
   return harness;
 }

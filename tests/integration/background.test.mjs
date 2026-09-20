@@ -101,7 +101,8 @@ test('irrelevant page → friction page → countdown → continue → temporary
   view = await h.sendMessage('getFrictionState', { ...params, tabId: Number(params.tabId) });
   assert.equal(view.state, 'UNLOCKED');
 
-  cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id, generation: view.generation });
+  // The friction page's sender tab is authoritative for tab/window identity.
+  cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id, generation: view.generation }, { tab: { id, windowId: 1 } });
   assert.equal(cont.ok, true);
   assert.equal(cont.state, 'TEMPORARILY_ALLOWED');
   assert.equal(h.navigations.at(-1).url, url, 'background navigated back to the site');
@@ -117,13 +118,74 @@ test('irrelevant page → friction page → countdown → continue → temporary
   assert.equal(stats.today.frictionTriggered, 1);
   assert.equal(stats.today.overrides, 1);
   assert.equal(stats.grants.length, 1);
+  const grant = stats.grants[0];
+  assert.equal(grant.tabId, id, 'default scope is per-tab');
+  assert.equal(grant.windowId, 1);
+  assert.ok(h.scheduledAlarms().has(`goalguard-expire:${grant.key}`), 'an alarm is armed for exactly expiresAt');
+  assert.equal(h.scheduledAlarms().get(`goalguard-expire:${grant.key}`).when, grant.expiresAt);
 
-  // Revoking the grant re-triggers friction on the open tab.
-  await h.sendMessage('revokeGrant', { domain: 'pcmag.com' });
+  // Expiry: the alarm fires while the user does nothing at all — no click, switch or reload.
+  // The tab is replaced immediately with the "access expired" friction page.
+  await h.fireAlarm(`goalguard-expire:${grant.key}`);
   await settle();
-  assert.equal(h.navigations.length, 3);
-  assert.match(h.navigations.at(-1).url, /blocked\.html/);
+  assert.equal(h.navigations.length, 3, 'tab was replaced without user interaction');
+  assert.equal(h.navigations.at(-1).tabId, id);
+  assert.match(h.navigations.at(-1).url, /blocked\.html.*expired=1/);
+  assert.ok(h.mediaPauses.includes(id), 'media pause attempted before redirect');
+  assert.equal((await h.sendMessage('getStatistics')).grants.length, 0);
+  assert.equal((await h.sendMessage('getStatistics')).today.overrideExpired, 1);
+
+  // "Wait again": the expired page requests a fresh authoritative countdown.
+  const again = await h.sendMessage('getFrictionState', { ...params, tabId: id });
+  assert.equal(again.state, 'COUNTING_DOWN');
   await h.browser.tabs.remove(id);
+});
+
+test('expiry never blocks a tab that has moved to another site', async () => {
+  await h.sendMessage('saveSettings', { frictionSeconds: 1, overrideMinutes: 0.5 });
+  const url = 'https://www.pcmag.com/picks/the-best-gaming-pcs';
+  const id = await h.openTab({ url, title: 'Best Gaming PCs of 2026' });
+  await settle(800);
+  const params = Object.fromEntries(new URL(h.navigations.at(-1).url).searchParams);
+  await sleep(1100);
+  const view = await h.sendMessage('getFrictionState', { ...params, tabId: id });
+  const cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id, generation: view.generation });
+  assert.equal(cont.ok, true);
+  const before = h.navigations.length;
+  // User leaves for a relevant site before the timer runs out.
+  await h.navigateTab(id, { url: 'https://github.com/torvalds/linux', title: 'torvalds/linux: Linux kernel source tree' });
+  await settle();
+  const key = `pcmag.com|${id}`;
+  await h.fireAlarm(`goalguard-expire:${key}`);
+  await settle();
+  assert.equal(h.navigations.length, before, 'GitHub tab was left alone');
+  assert.equal(h.tab(id).url, 'https://github.com/torvalds/linux');
+  await h.browser.tabs.remove(id);
+});
+
+test('expiryAction "close" closes the tab; "domain" scope covers every tab on the site', async () => {
+  await h.sendMessage('saveSettings', { frictionSeconds: 1, overrideMinutes: 0.5, expiryAction: 'close', overrideScope: 'domain' });
+  await sleep(50);
+  const url = 'https://www.pcmag.com/picks/the-best-gaming-pcs';
+  const id = await h.openTab({ url, title: 'Best Gaming PCs of 2026' });
+  await settle(800);
+  const params = Object.fromEntries(new URL(h.navigations.at(-1).url).searchParams);
+  await sleep(1100);
+  const view = await h.sendMessage('getFrictionState', { ...params, tabId: id });
+  await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id, generation: view.generation });
+  const grants = (await h.sendMessage('getStatistics')).grants;
+  assert.equal(grants[0].key, 'pcmag.com');
+  assert.equal(grants[0].tabId, null);
+  // A second pcmag tab is allowed straight through under the shared allowance.
+  const before = h.navigations.length;
+  const id2 = await h.openTab({ url: 'https://www.pcmag.com/reviews/some-laptop', title: 'Laptop review' });
+  await settle(800);
+  assert.equal(h.navigations.length, before, 'no friction on second tab of the granted domain');
+  await h.fireAlarm('goalguard-expire:pcmag.com');
+  await settle();
+  assert.equal(h.tab(id2), undefined, 'active pcmag tab was closed');
+  await h.sendMessage('saveSettings', { expiryAction: 'friction', overrideScope: 'tab' });
+  if (h.tab(id)) await h.browser.tabs.remove(id);
 });
 
 test('go back abandons the countdown and records the statistic', async () => {

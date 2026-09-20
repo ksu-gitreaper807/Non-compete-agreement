@@ -30,6 +30,8 @@ async function load() {
   setRadio('friction', s.frictionSeconds, 'frictionCustom');
   setRadio('override', s.overrideMinutes, 'overrideCustom');
   $('questionableFrictionMode').value = s.questionableFrictionMode;
+  $('overrideScope').value = s.overrideScope ?? 'tab';
+  $('expiryAction').value = s.expiryAction ?? 'friction';
   $('questionableFrictionSeconds').value = s.questionableFrictionSeconds;
   $('embeddingsEnabled').checked = s.embeddingsEnabled !== false;
   $('llmEnabled').checked = Boolean(s.llmEnabled);
@@ -187,6 +189,8 @@ async function save() {
     frictionSeconds: readRadio('friction', 'frictionCustom', 10),
     overrideMinutes: readRadio('override', 'overrideCustom', 5),
     questionableFrictionMode: $('questionableFrictionMode').value,
+    overrideScope: $('overrideScope').value,
+    expiryAction: $('expiryAction').value,
     questionableFrictionSeconds: Number($('questionableFrictionSeconds').value),
     embeddingsEnabled: $('embeddingsEnabled').checked,
     llmEnabled: $('llmEnabled').checked,
@@ -251,12 +255,12 @@ async function refreshGrants() {
   box.append(title);
   for (const g of grants) {
     const p = document.createElement('p');
-    p.textContent = `${g.domain} — expires ${new Date(g.expiresAt).toLocaleTimeString()}`;
+    p.textContent = `${g.domain}${g.tabId != null ? ' (one tab)' : ' (all tabs)'} — expires ${new Date(g.expiresAt).toLocaleTimeString()}`;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = 'Revoke';
     btn.addEventListener('click', async () => {
-      await send('revokeGrant', { domain: g.domain });
+      await send('revokeGrant', { key: g.key, domain: g.domain });
       refreshGrants();
     });
     p.append(btn);

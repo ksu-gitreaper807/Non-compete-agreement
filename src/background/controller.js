@@ -21,6 +21,10 @@ export class Controller {
    * @param {import('../background/sessionTracker.js').SessionTracker} deps.sessions
    * @param {() => Promise<{settings, rules, anchors}>} deps.loadConfig
    * @param {(tabId: number, url: string) => Promise<void>} deps.navigate
+   * @param {(tabId: number) => Promise<Object|null>} [deps.getTab]      browser.tabs.get, null when gone
+   * @param {(tabId: number) => Promise<void>} [deps.closeTab]
+   * @param {(tabId: number) => Promise<void>} [deps.pauseMedia]        best-effort video/audio pause
+   * @param {string} [deps.neutralUrl]                                  target for expiryAction 'neutral'
    * @param {(params: Object) => string} deps.blockedPageUrl
    * @param {(tabId: number) => Promise<boolean>} [deps.isBlockedPage]
    * @param {PersistentCache} [deps.classificationCache]  final-decision cache (persistent)
@@ -180,7 +184,7 @@ export class Controller {
       return { ignored: true, reason: 'stale', tabId };
     }
     const policy = decide(classification.classification, config.settings);
-    const grant = await this.deps.friction.hasActiveGrant(domain);
+    const grant = await this.deps.friction.hasActiveGrant(domain, tabId);
 
     const outcome = {
       tabId,
@@ -279,9 +283,16 @@ export class Controller {
     return { ...state, goal: config.settings.weeklyGoal, settings: publicSettings(config.settings), url };
   }
 
-  async continueFromFriction({ domain, url, tabId, generation }) {
+  async continueFromFriction({ domain, url, tabId, generation, windowId = null }) {
     const config = await this.getConfig();
-    const result = await this.deps.friction.grantAccess({ tabId, domain, generation, overrideMinutes: config.settings.overrideMinutes });
+    const result = await this.deps.friction.grantAccess({
+      tabId,
+      domain,
+      windowId,
+      generation,
+      overrideMinutes: config.settings.overrideMinutes,
+      scope: config.settings.overrideScope,
+    });
     if (result.ok && typeof tabId === 'number' && url) {
       this.tabResults.delete(tabId);
       await this.deps.navigate(tabId, url);
@@ -317,11 +328,65 @@ export class Controller {
     return reset;
   }
 
-  /** Called when a temporary grant expires; the caller re-evaluates matching tabs. */
-  async onGrantExpired(domain) {
+  /**
+   * A temporary grant has expired (alarm or safety-net tick). Enforcement is immediate and
+   * tab-aware: only tabs that still exist AND are still on the granted domain are touched;
+   * everything else just has its cached decision dropped.
+   * @returns {Promise<number[]>} tab ids that were intervened on
+   */
+  async onGrantExpired(grant) {
+    const domain = typeof grant === 'string' ? grant : grant.domain;
+    const candidates = new Set();
     for (const [tabId, outcome] of this.tabResults) {
-      if (outcome.domain === domain) this.tabResults.delete(tabId);
+      if (outcome.domain === domain && (grant.tabId == null || grant.tabId === tabId)) {
+        this.tabResults.delete(tabId);
+        candidates.add(tabId);
+      }
     }
+    if (grant.tabId != null) candidates.add(grant.tabId);
+    else if (this.deps.queryTabs) for (const t of await this.deps.queryTabs()) if (t.url && extractDomain(t.url) === domain) candidates.add(t.id);
+
+    const enforced = [];
+    for (const tabId of candidates) {
+      if (await this.enforceExpiry(tabId, grant)) enforced.push(tabId);
+    }
+    return enforced;
+  }
+
+  async enforceExpiry(tabId, grant) {
+    const tab = await this.deps.getTab?.(tabId);
+    if (!tab || !tab.url || !isSupportedUrl(tab.url)) return false; // closed or already elsewhere
+    if (extractDomain(tab.url) !== grant.domain) return false; // moved to another site: never block that
+    const config = await this.getConfig();
+    // Still on the distracting site: stop counting override time, then intervene.
+    await this.deps.sessions.stop();
+    this.forgetTab(tabId);
+    await this.deps.pauseMedia?.(tabId).catch(() => {});
+    const action = config.settings.expiryAction;
+    if (action === 'close') {
+      await this.deps.closeTab?.(tabId);
+      return true;
+    }
+    if (action === 'neutral' && this.deps.neutralUrl) {
+      await this.deps.navigate(tabId, this.deps.neutralUrl);
+      return true;
+    }
+    // Default: replace the tab with the friction page in its "access expired" form. The
+    // page requests a fresh authoritative countdown ("Wait again") from the background.
+    await this.deps.navigate(
+      tabId,
+      this.deps.blockedPageUrl({
+        url: tab.url,
+        domain: grant.domain,
+        title: normalizeTitle(tab.title ?? ''),
+        classification: grant.classification ?? 'irrelevant',
+        decision: grant.decision ?? 'block',
+        tabId,
+        expired: 1,
+        usedMinutes: Math.round(((Date.now() - grant.grantedAt) / 60000) * 10) / 10,
+      })
+    );
+    return true;
   }
 
   forgetTab(tabId) {

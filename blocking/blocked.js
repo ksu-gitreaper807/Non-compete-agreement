@@ -9,7 +9,7 @@ const api = globalThis.browser ?? globalThis.chrome;
 const params = parseBlockedPageParams(location.search);
 
 const el = Object.fromEntries(
-  ['card', 'eyebrow', 'headline', 'goal', 'pageTitle', 'domain', 'scoreRow', 'score', 'aiRow', 'aiVerdict', 'evidenceRow', 'evidence', 'whyBtn', 'details', 'count', 'unit', 'hint', 'back', 'continue', 'error', 'recovery', 'recoveryLink', 'fine', 'feedback', 'feedbackFix', 'feedbackDone']
+  ['card', 'eyebrow', 'headline', 'goal', 'pageTitle', 'domain', 'scoreRow', 'score', 'aiRow', 'aiVerdict', 'evidenceRow', 'evidence', 'whyBtn', 'details', 'count', 'unit', 'hint', 'back', 'continue', 'error', 'recovery', 'recoveryLink', 'fine', 'feedback', 'feedbackFix', 'feedbackDone', 'usedRow', 'used', 'closeTab']
     .map((id) => [id, document.getElementById(id)])
 );
 
@@ -37,6 +37,18 @@ function renderStatic() {
   } else {
     el.eyebrow.textContent = 'Take a pause';
     el.headline.textContent = "This page doesn't appear related to your weekly goal.";
+  }
+  if (params.expired) {
+    // Background replaced the tab because temporary access ran out (no click was needed).
+    el.eyebrow.textContent = 'Time is up';
+    el.headline.textContent = 'Temporary access expired. Wait again to continue.';
+    el.continue.textContent = 'Wait again';
+    el.closeTab.hidden = false;
+    el.feedback.hidden = true;
+    if (Number.isFinite(params.usedMinutes)) {
+      el.usedRow.hidden = false;
+      el.used.textContent = `${formatMinutes(params.usedMinutes)} used`;
+    }
   }
   if (typeof params.score === 'number' && Number.isFinite(params.score)) {
     el.scoreRow.hidden = false;
@@ -213,11 +225,21 @@ function showRecovery(error) {
 }
 
 function formatMinutes(m) {
-  return m === 1 ? '1 minute' : `${m} minutes`;
+  const n = Math.round(m * 10) / 10;
+  return n === 1 ? '1 minute' : `${n} minutes`;
+}
+
+async function onCloseTab() {
+  try {
+    await send('leaveFriction', { tabId: params.tabId, closeTab: true });
+  } catch {
+    window.close();
+  }
 }
 
 el.continue.addEventListener('click', onContinue);
 el.back.addEventListener('click', onBack);
+el.closeTab.addEventListener('click', onCloseTab);
 el.whyBtn.addEventListener('click', () => {
   el.details.hidden = !el.details.hidden;
   if (!el.details.hidden) renderDetails();
