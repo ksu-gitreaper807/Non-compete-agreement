@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-const include = ['manifest.json', 'src', 'popup', 'options', 'blocking', 'icons', 'vendor', 'models', 'LICENSE'];
+const include = ['manifest.json', 'src', 'popup', 'options', 'blocking', 'ledger', 'icons', 'vendor', 'models', 'LICENSE'];
 const exclude = (rel) => rel.endsWith('.map') || path.basename(rel) === '.DS_Store' || rel === 'models/README.md';
 
 function walk(rel, out) {

@@ -376,3 +376,54 @@ test('unknown message types return an error object instead of throwing', async (
   const r = await h.sendMessage('nope');
   assert.match(r.error, /Unknown message/);
 });
+
+test('intent ledger: capture at friction, persist, no bypass when opened, timer reset keeps the entry', async () => {
+  await h.sendMessage('saveSettings', { frictionSeconds: 1, overrideMinutes: 0.5 });
+  await sleep(50);
+  const url = 'https://www.reddit.com/r/gaming/comments/abc/best_memes';
+  const id = await h.openTab({ url, title: 'Best gaming memes of the week' });
+  await settle(800);
+  assert.match(h.navigations.at(-1).url, /blocked\.html/, 'friction shown first');
+
+  // The friction page offers the prompt; the user writes a reason.
+  const dup0 = await h.sendMessage('ledgerFindDuplicate', { domain: 'reddit.com', intent: 'Find the discussion about the kernel bug' });
+  assert.equal(dup0.duplicate, null);
+  const { entry } = await h.sendMessage('ledgerCreate', { domain: 'reddit.com', url, title: 'Best gaming memes of the week', intent: 'Find the discussion about the kernel bug', source: 'friction' });
+  assert.equal(entry.status, 'pending');
+  assert.equal(h.store.get('ledger').entries.length, 1, 'persisted in storage.local under its own key');
+  for (const [key, value] of h.store.entries()) {
+    if (key.startsWith('cache:')) assert.ok(!JSON.stringify(value).includes('discussion about the kernel bug'), `intent leaked into ${key}`);
+  }
+
+  // Duplicate attempt is detected; friction view shows the stated reason.
+  const dup1 = await h.sendMessage('ledgerFindDuplicate', { domain: 'reddit.com', intent: 'find discussion about kernel bug' });
+  assert.equal(dup1.duplicate.id, entry.id);
+  assert.equal((await h.sendMessage('ledgerForDomain', { domain: 'reddit.com' })).pending[0].intent, 'Find the discussion about the kernel bug');
+
+  // Tab switch resets the running countdown — the ledger entry is untouched.
+  const other = await h.openTab({ url: 'https://github.com/torvalds/linux', title: 'torvalds/linux' });
+  await settle();
+  const stats = await h.sendMessage('getStatistics');
+  assert.ok(stats.today.frictionReset >= 1, 'timer reset by switching away');
+  assert.equal((await h.sendMessage('ledgerList', { status: ['pending'] })).entries.length, 1);
+  await h.browser.tabs.remove(id);
+  await h.browser.tabs.remove(other);
+
+  // Later: open the task from the ledger → new tab → classifier → friction again (no bypass).
+  const before = h.navigations.length;
+  const opened = await h.sendMessage('ledgerOpen', { id: entry.id });
+  assert.equal(opened.url, url);
+  // The real page then loads and reports its title, as any tab would.
+  await h.navigateTab(opened.tabId, { url, title: 'Best gaming memes of the week' });
+  await settle(800);
+  assert.equal(h.navigations.length, before + 1, JSON.stringify(h.navigations.slice(before)));
+  assert.equal(h.navigations.at(-1).tabId, opened.tabId);
+  assert.match(h.navigations.at(-1).url, /blocked\.html/, 'opening from the ledger still hits friction');
+  assert.equal((await h.sendMessage('ledgerList', {})).entries[0].status, 'in_progress', 'opening never completes a task');
+
+  // Completion is explicit.
+  const done = await h.sendMessage('ledgerComplete', { id: entry.id });
+  assert.equal(done.entry.status, 'completed');
+  assert.equal((await h.sendMessage('ledgerList', { status: ['pending', 'in_progress'] })).counts.open, 0);
+  await h.browser.tabs.remove(opened.tabId);
+});

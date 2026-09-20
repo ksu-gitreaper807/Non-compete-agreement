@@ -66,3 +66,18 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .details p { margin: 0 0 6px; }
 .details ul { margin: 4px 0 0; padding-left: 18px; }
 .feedback { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
+
+/* Intent ledger prompt: optional, must never feel like more friction. */
+.ledger { text-align: left; margin: 0 0 20px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 14px; }
+.ledger-label { display: block; font-size: 13px; margin-bottom: 6px; }
+.muted { color: var(--muted); }
+.ledger-form input { width: 100%; font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: rgba(148,163,184,.06); color: var(--text); }
+.ledger-form input:focus { outline: 2px solid var(--accent-ok); outline-offset: 1px; }
+.ledger-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 8px; }
+button.small { min-width: 0; padding: 7px 14px; font-size: 13px; }
+.small-link { font-size: 12px; text-decoration: none; }
+.ledger-known { margin: 0 0 10px; font-size: 14px; }
+.ledger-known q { font-weight: 600; }
+.ledger-dup { font-size: 13px; }
+.ledger-dup p { margin: 0 0 8px; }
+.ledger-saved { margin: 0; font-size: 13px; color: var(--accent-ok); }

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Intent Ledger – GoalGuard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="ledger.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="head">
+      <div>
+        <p class="eyebrow">GoalGuard</p>
+        <h1>Intent Ledger</h1>
+        <p class="sub" id="summary">Loading…</p>
+      </div>
+      <div class="head-actions">
+        <button type="button" id="startSession" class="primary">Start Ledger Session</button>
+      </div>
+    </header>
+
+    <section class="session" id="session" hidden>
+      <p class="eyebrow">Ledger session · <span id="sessionPos"></span></p>
+      <h2 id="sessionIntent"></h2>
+      <p class="muted" id="sessionMeta"></p>
+      <div class="row">
+        <button type="button" id="sessionOpen" class="primary">Open</button>
+        <button type="button" id="sessionComplete">Mark Complete</button>
+        <button type="button" id="sessionSkip">Skip</button>
+        <button type="button" id="sessionEnd" class="ghost">End Session</button>
+      </div>
+      <p class="muted" id="sessionDone" hidden>All tasks handled. 🎉</p>
+    </section>
+
+    <section class="add">
+      <form id="addForm" class="add-form" autocomplete="off">
+        <input id="addIntent" type="text" maxlength="200" placeholder="Task, e.g. Check GitHub issue #142" required />
+        <input id="addDomain" type="text" maxlength="100" placeholder="site, e.g. github.com" required />
+        <button type="submit">Add</button>
+      </form>
+    </section>
+
+    <section class="toolbar">
+      <input id="search" type="search" placeholder="Search ledger…" />
+      <div class="filters" id="filters">
+        <button type="button" data-filter="open" class="on">Pending</button>
+        <button type="button" data-filter="completed">Completed</button>
+        <button type="button" data-filter="all">All</button>
+      </div>
+      <button type="button" id="clearCompleted" class="ghost">Clear completed</button>
+    </section>
+
+    <ul class="list" id="list"></ul>
+    <p class="empty muted" id="empty" hidden>Nothing here. Tasks you write on the pause page collect in this list.</p>
+
+    <template id="rowTpl">
+      <li class="entry">
+        <label class="check"><input type="checkbox" class="done" /><span></span></label>
+        <div class="body">
+          <p class="intent"></p>
+          <p class="meta"><span class="domain"></span> · <span class="when"></span><span class="title"></span></p>
+          <form class="edit" hidden><input type="text" maxlength="200" /><button type="submit" class="small">Save</button><button type="button" class="small cancel">Cancel</button></form>
+        </div>
+        <div class="acts">
+          <button type="button" class="small open">Open</button>
+          <button type="button" class="small openDomain" title="Open the site instead of the saved link">Site</button>
+          <button type="button" class="small editBtn">Edit</button>
+          <button type="button" class="small del">Delete</button>
+        </div>
+      </li>
+    </template>
+  </main>
+  <script type="module" src="ledger.js"></script>
+</body>
+</html>

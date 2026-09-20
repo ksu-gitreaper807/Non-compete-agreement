@@ -22,6 +22,7 @@ import { SessionTracker } from './sessionTracker.js';
 import { Controller } from './controller.js';
 import { TabMonitor } from './tabMonitor.js';
 import { createMessageRouter } from './messageRouter.js';
+import { LedgerManager } from '../ledger/ledgerManager.js';
 import { buildBlockedPageUrl, isBlockedPageUrl, BLOCKED_PAGE_PATH } from '../blocking/blocker.js';
 import { validatePattern } from '../utils/regex.js';
 import { extractDomain } from '../utils/text.js';
@@ -48,6 +49,8 @@ async function boot() {
     saveCurrent: (cur) => storage.setValue('currentSession', cur),
     limits: DEFAULT_LIMITS,
   });
+
+  const ledger = new LedgerManager({ load: storage.getLedger, save: storage.saveLedger });
 
   const friction = new FrictionManager({
     load: storage.getFrictionState,
@@ -151,7 +154,7 @@ async function boot() {
 
   browserApi.alarms.create(ALARM_TICK, { periodInMinutes: 1 });
 
-  app = { sessions, friction, modelManager, llmManager, searchManager, llmClassifier, pipeline, controller, tabMonitor, caches };
+  app = { sessions, friction, ledger, modelManager, llmManager, searchManager, llmClassifier, pipeline, controller, tabMonitor, caches };
   return app;
 }
 
@@ -307,6 +310,81 @@ const router = createMessageRouter({
   async getFrictionState(payload) {
     const { controller } = await ensureBooted();
     return controller.getFrictionView(payload);
+  },
+
+  // ---- Intent ledger ------------------------------------------------------------------------
+
+  async ledgerList(payload = {}) {
+    const { ledger } = await ensureBooted();
+    return { entries: await ledger.listEntries(payload), counts: await ledger.counts(), session: await ledger.getSession() };
+  },
+
+  /** Friction page asks what the user already said about this domain. */
+  async ledgerForDomain({ domain }) {
+    const { ledger } = await ensureBooted();
+    return { pending: await ledger.pendingForDomain(domain) };
+  },
+
+  async ledgerFindDuplicate({ domain, intent }) {
+    const { ledger } = await ensureBooted();
+    return { duplicate: await ledger.findDuplicate({ domain, intent }) };
+  },
+
+  async ledgerCreate({ domain, url, title, intent, source }) {
+    const { ledger } = await ensureBooted();
+    return { entry: await ledger.createEntry({ domain, url, title, intent, source }) };
+  },
+
+  async ledgerUpdate({ id, changes }) {
+    const { ledger } = await ensureBooted();
+    return { entry: await ledger.updateEntry(id, changes) };
+  },
+
+  async ledgerComplete({ id }) {
+    const { ledger } = await ensureBooted();
+    return { entry: await ledger.completeEntry(id) };
+  },
+
+  async ledgerReopen({ id }) {
+    const { ledger } = await ensureBooted();
+    return { entry: await ledger.reopenEntry(id) };
+  },
+
+  async ledgerDelete({ id }) {
+    const { ledger } = await ensureBooted();
+    return { removed: await ledger.deleteEntry(id) };
+  },
+
+  async ledgerClearCompleted() {
+    const { ledger } = await ensureBooted();
+    return { removed: await ledger.clearCompleted() };
+  },
+
+  /**
+   * Open a task in a new tab. The tab goes through the ordinary tab monitor → classifier →
+   * friction path; the ledger grants nothing. Falls back to the domain when no URL is stored
+   * or the caller asks for it (stale link).
+   */
+  async ledgerOpen({ id, useDomain = false }) {
+    const { ledger } = await ensureBooted();
+    const entry = await ledger.getEntry(id);
+    if (!entry) return { error: 'No such entry' };
+    const url = !useDomain && entry.url ? entry.url : `https://${entry.domain}/`;
+    await ledger.startEntry(id);
+    const tab = await browserApi.tabs.create({ url, active: true });
+    return { tabId: tab?.id ?? null, url };
+  },
+
+  async ledgerSession({ action }) {
+    const { ledger } = await ensureBooted();
+    if (action === 'start') return { session: await ledger.startSession() };
+    if (action === 'skip') return { session: await ledger.skipCurrent() };
+    if (action === 'end') { await ledger.endSession(); return { session: null }; }
+    return { session: await ledger.getSession() };
+  },
+
+  async openLedgerPage() {
+    await browserApi.tabs.create({ url: browserApi.runtime.getURL('ledger/ledger.html'), active: true });
   },
 
   async continueFromFriction(payload, sender) {

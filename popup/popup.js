@@ -242,6 +242,15 @@ $('feedbackFix').addEventListener('click', (e) => {
   const label = e.target.dataset?.label;
   if (label) sendFeedback(label);
 });
+$('openLedger').addEventListener('click', (e) => {
+  e.preventDefault();
+  send('openLedgerPage').catch(() => {});
+  window.close();
+});
+send('ledgerList', { status: ['pending', 'in_progress'] })
+  .then((r) => { if (r?.counts?.open) $('ledgerCount').textContent = ` (${r.counts.open})`; })
+  .catch(() => {});
+
 $('openOptions').addEventListener('click', (e) => {
   e.preventDefault();
   api.runtime.openOptionsPage();

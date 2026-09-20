@@ -44,6 +44,24 @@
     <p class="why"><button type="button" class="linklike" id="whyBtn">Why?</button></p>
     <div class="details" id="details" hidden></div>
 
+    <section class="ledger" id="ledgerBox">
+      <p class="ledger-known" id="ledgerKnown" hidden></p>
+      <form id="ledgerForm" class="ledger-form" autocomplete="off">
+        <label for="ledgerIntent" class="ledger-label">Why are you opening this? <span class="muted">(optional — one concrete task)</span></label>
+        <input id="ledgerIntent" type="text" maxlength="200" placeholder="e.g. Watch lecture 4 on processes" />
+        <div class="ledger-actions">
+          <button type="submit" id="ledgerAdd" class="secondary small">Add to Ledger</button>
+          <a href="#" id="ledgerOpenLink" class="muted small-link">View ledger</a>
+        </div>
+      </form>
+      <div id="ledgerDup" class="ledger-dup" hidden>
+        <p>You already have: <q id="ledgerDupText"></q></p>
+        <button type="button" id="ledgerUseExisting" class="secondary small">Use existing</button>
+        <button type="button" id="ledgerCreateAnother" class="secondary small">Create another</button>
+      </div>
+      <p id="ledgerSaved" class="ledger-saved" hidden></p>
+    </section>
+
     <section class="timer" aria-live="polite">
       <div class="count" id="count">--</div>
       <div class="unit" id="unit">seconds</div>

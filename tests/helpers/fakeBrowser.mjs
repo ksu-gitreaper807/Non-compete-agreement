@@ -75,6 +75,17 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
       return structuredClone(tab);
     },
     remove: async (id) => { tabs.delete(id); await tabsApi.onRemoved.emit(id, {}); },
+    /** New tab: behaves like harness.openTab so the tab monitor sees it. */
+    create: async ({ url, active = true }) => {
+      const id = nextTabId++;
+      const previousTabId = [...tabs.values()].find((t) => t.active)?.id;
+      if (active) for (const t of tabs.values()) t.active = false;
+      const tab = { id, url, title: '', active, windowId: 1 };
+      tabs.set(id, tab);
+      if (active) await tabsApi.onActivated.emit({ tabId: id, previousTabId, windowId: 1 });
+      await tabsApi.onUpdated.emit(id, { status: 'complete', url }, structuredClone(tab));
+      return structuredClone(tab);
+    },
   };
 
   const windows = { WINDOW_ID_NONE: -1, onFocusChanged: makeEvent(), get: async (id) => ({ id, focused: true }) };

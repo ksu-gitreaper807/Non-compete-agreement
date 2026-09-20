@@ -111,6 +111,8 @@ goalguard/
 │   │   └── llmClassifier.js      Classifier over the above with its own verdict cache
 │   ├── blocking/
 │   │   ├── frictionManager.js    authoritative countdown / grant state machine
+│   ├── ledger/
+│   │   └── ledgerManager.js      Intent Ledger: user-written reasons, sessions, dedupe (local only)
 │   │   └── blocker.js            friction page URL helpers
 │   ├── storage/
 │   │   ├── schema.js             defaults, enums, day/week keys
@@ -414,6 +416,36 @@ Guarantees:
 
 Statistics per day: `frictionTriggered`, `frictionCompleted`, `frictionAbandoned`, `frictionReset`, `overrides`,
 `overrideMs` (time spent after overrides), plus `relevantMs / questionableMs / irrelevantMs`.
+
+## Intent Ledger
+
+The pause page asks — optionally — *"Why are you opening this?"*. A one-line answer becomes a
+ledger entry (`ledger/ledger.html`, reachable from the popup footer and the pause page):
+
+```json
+{ "id": "uuid", "createdAt": 0, "updatedAt": 0, "domain": "youtube.com",
+  "url": "https://youtube.com/…", "titleAtCreation": "OS Lecture 4",
+  "intent": "Watch lecture 4 on processes", "normalizedIntent": "watch lecture 4 processes",
+  "status": "pending | in_progress | completed | dismissed", "completedAt": null, "source": "friction | ledger" }
+```
+
+* **Intent first.** The user's exact words are the primary data; URL/title are context that may
+  go stale (an entry can be opened by saved link or by bare domain).
+* **Not history, not a cache.** Entries exist only when the user typed one. They live under the
+  single `ledger` storage key, separate from `cache:*` and friction state, never leave the
+  device and are never shown to the search or LLM layers.
+* **No bypass.** *Open* creates an ordinary tab that goes through the same classifier and
+  friction as any navigation; it only marks the task `in_progress`. Completion is always an
+  explicit click — never inferred from tab closing, time on site or navigation.
+* **Piling + session.** Tasks accumulate across domains; *Start Ledger Session* walks them
+  oldest-first with Open / Mark Complete / Skip / End. Search is plain substring over
+  intent/domain/title; filters Pending / Completed / All.
+* **Duplicates.** Before creating: same domain + identical normalised intent (lower-case, no
+  punctuation, a few filler words dropped) that is still open and < 7 days old →
+  *Use existing / Create another*. Nothing semantic.
+* **Retention.** Pending forever; completed/dismissed pruned after 30 days
+  (`LEDGER_LIMITS.completedRetentionDays`, 0 = keep). Cap 1000 entries, oldest closed first.
+* Tab-switch timer reset is unchanged and leaves entries intact (integration-tested).
 
 ## Data model
 

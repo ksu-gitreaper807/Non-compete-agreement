@@ -9,7 +9,7 @@ const api = globalThis.browser ?? globalThis.chrome;
 const params = parseBlockedPageParams(location.search);
 
 const el = Object.fromEntries(
-  ['card', 'eyebrow', 'headline', 'goal', 'pageTitle', 'domain', 'scoreRow', 'score', 'aiRow', 'aiVerdict', 'evidenceRow', 'evidence', 'whyBtn', 'details', 'count', 'unit', 'hint', 'back', 'continue', 'error', 'recovery', 'recoveryLink', 'fine', 'feedback', 'feedbackFix', 'feedbackDone', 'usedRow', 'used', 'closeTab']
+  ['card', 'eyebrow', 'headline', 'goal', 'pageTitle', 'domain', 'scoreRow', 'score', 'aiRow', 'aiVerdict', 'evidenceRow', 'evidence', 'whyBtn', 'details', 'count', 'unit', 'hint', 'back', 'continue', 'error', 'recovery', 'recoveryLink', 'fine', 'feedback', 'feedbackFix', 'feedbackDone', 'usedRow', 'used', 'closeTab', 'ledgerBox', 'ledgerKnown', 'ledgerForm', 'ledgerIntent', 'ledgerAdd', 'ledgerOpenLink', 'ledgerDup', 'ledgerDupText', 'ledgerUseExisting', 'ledgerCreateAnother', 'ledgerSaved']
     .map((id) => [id, document.getElementById(id)])
 );
 
@@ -224,6 +224,66 @@ function showRecovery(error) {
   el.recovery.hidden = false;
 }
 
+// ---- Intent ledger ----------------------------------------------------------------------------
+// Optional. Adding a reason never changes the countdown; skipping it is the existing flow.
+
+async function loadLedgerContext() {
+  if (!params.domain) return;
+  try {
+    const { pending = [] } = (await send('ledgerForDomain', { domain: params.domain })) ?? {};
+    if (pending.length) {
+      const first = pending[0];
+      el.ledgerKnown.hidden = false;
+      el.ledgerKnown.innerHTML = '';
+      el.ledgerKnown.append('Your stated reason: ');
+      const q = document.createElement('q');
+      q.textContent = first.intent;
+      el.ledgerKnown.append(q);
+      if (pending.length > 1) el.ledgerKnown.append(` (+${pending.length - 1} more for ${params.domain})`);
+      el.ledgerIntent.placeholder = 'Add another task for this site';
+    }
+  } catch {
+    /* ledger is optional; ignore */
+  }
+}
+
+let pendingIntent = null;
+
+async function onLedgerSubmit(e) {
+  e.preventDefault();
+  const intent = el.ledgerIntent.value.trim();
+  if (!intent) return;
+  el.ledgerAdd.disabled = true;
+  try {
+    const { duplicate } = (await send('ledgerFindDuplicate', { domain: params.domain, intent })) ?? {};
+    if (duplicate) {
+      pendingIntent = intent;
+      el.ledgerDupText.textContent = duplicate.intent;
+      el.ledgerDup.hidden = false;
+      el.ledgerForm.hidden = true;
+      return;
+    }
+    await createLedgerEntry(intent);
+  } catch (err) {
+    el.error.textContent = 'Could not save to the ledger.';
+    el.error.hidden = false;
+  } finally {
+    el.ledgerAdd.disabled = false;
+  }
+}
+
+async function createLedgerEntry(intent) {
+  await send('ledgerCreate', { domain: params.domain, url: params.url, title: params.title, intent, source: 'friction' });
+  showLedgerSaved('Added to your ledger. You can close this and deal with it later — or wait and continue.');
+}
+
+function showLedgerSaved(text) {
+  el.ledgerForm.hidden = true;
+  el.ledgerDup.hidden = true;
+  el.ledgerSaved.hidden = false;
+  el.ledgerSaved.textContent = text;
+}
+
 function formatMinutes(m) {
   const n = Math.round(m * 10) / 10;
   return n === 1 ? '1 minute' : `${n} minutes`;
@@ -240,6 +300,10 @@ async function onCloseTab() {
 el.continue.addEventListener('click', onContinue);
 el.back.addEventListener('click', onBack);
 el.closeTab.addEventListener('click', onCloseTab);
+el.ledgerForm.addEventListener('submit', onLedgerSubmit);
+el.ledgerUseExisting.addEventListener('click', () => showLedgerSaved('Kept the existing ledger task.'));
+el.ledgerCreateAnother.addEventListener('click', () => createLedgerEntry(pendingIntent).catch(() => {}));
+el.ledgerOpenLink.addEventListener('click', (e) => { e.preventDefault(); send('openLedgerPage').catch(() => {}); });
 el.whyBtn.addEventListener('click', () => {
   el.details.hidden = !el.details.hidden;
   if (!el.details.hidden) renderDetails();
@@ -266,6 +330,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 renderStatic();
+loadLedgerContext();
 sync();
 // Periodic re-sync guards against clock drift and background restarts.
 syncTimer = setInterval(sync, 5000);

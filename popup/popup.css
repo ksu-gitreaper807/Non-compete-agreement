@@ -11,7 +11,7 @@ body { margin: 0; width: 320px; font: 13px/1.45 system-ui, -apple-system, "Segoe
 h2 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
 .goal-form { display: flex; gap: 6px; }
 .goal-form input { flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
-.goal-form button, .bottom a { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; text-decoration: none; }
+.goal-form button, .bottom a { font: inherit; padding: 6px 10px; margin-left: 6px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; text-decoration: none; }
 .goal-text { margin: 0; font-weight: 600; cursor: text; }
 .goal-text small { display: block; color: var(--muted); font-weight: 400; }
 .page-title { margin: 0 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

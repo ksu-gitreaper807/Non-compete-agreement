@@ -174,6 +174,16 @@ export async function saveSessions(sessions) {
   await rawSet({ sessions });
 }
 
+/** Intent ledger (user-written; never sent anywhere). */
+export async function getLedger() {
+  const { ledger } = await rawGet('ledger');
+  return ledger ?? { entries: [], session: null };
+}
+
+export async function saveLedger(ledger) {
+  await rawSet({ ledger });
+}
+
 /** Generic key/value access for caches. */
 export async function getValue(key, fallback = undefined) {
   const result = await rawGet(key);
