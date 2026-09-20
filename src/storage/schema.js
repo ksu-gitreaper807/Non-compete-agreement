@@ -56,6 +56,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
   // Behaviour when the semantic model cannot run
   fallbackClassification: 'unknown',
+
+  // Layer 3 (opt-in). llmEnabled: local LLM judges QUESTIONABLE pages; searchEnabled: fetch
+  // DuckDuckGo context for the LLM (the only network call besides the one-time model download).
+  llmEnabled: false,
+  searchEnabled: false,
 });
 
 export const DEFAULT_RULES = Object.freeze({

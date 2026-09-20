@@ -20,6 +20,8 @@ export function classificationConfigFingerprint({ settings, rules, anchors, mode
       settings?.weeklyGoal ?? '',
       settings?.relevantThreshold,
       settings?.questionableThreshold,
+      Boolean(settings?.llmEnabled),
+      Boolean(settings?.searchEnabled),
       settings?.allowedDomains ?? [],
       settings?.blockedDomains ?? [],
       rules?.allow ?? [],

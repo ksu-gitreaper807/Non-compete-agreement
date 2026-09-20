@@ -31,10 +31,36 @@ async function load() {
   setRadio('override', s.overrideMinutes, 'overrideCustom');
   $('questionableFrictionMode').value = s.questionableFrictionMode;
   $('questionableFrictionSeconds').value = s.questionableFrictionSeconds;
+  $('llmEnabled').checked = Boolean(s.llmEnabled);
+  $('searchEnabled').checked = Boolean(s.searchEnabled);
   $('anchorsPositive').value = state.anchors.positive.join('\n');
   $('anchorsNegative').value = state.anchors.negative.join('\n');
   for (const key of Object.keys(LIST_CONFIG)) renderList(key);
-  await Promise.all([refreshModel(), refreshGrants(), refreshCaches()]);
+  await Promise.all([refreshModel(), refreshGrants(), refreshCaches(), refreshLayer3()]);
+}
+
+const DDG_ORIGIN = 'https://html.duckduckgo.com/*';
+const HF_ORIGINS = ['https://huggingface.co/*', 'https://cdn-lfs.huggingface.co/*', 'https://cdn-lfs-us-1.huggingface.co/*', 'https://cas-bridge.xethub.hf.co/*'];
+
+async function requestOrigins(origins) {
+  try {
+    return await api.permissions.request({ origins });
+  } catch (e) {
+    $('status').textContent = `Permission request failed: ${e.message}`;
+    return false;
+  }
+}
+
+async function refreshLayer3() {
+  const st = await send('getLayer3Status');
+  if (!st || st.error) return;
+  const llm = st.llm;
+  const parts = [`LLM: ${llm.status}${llm.status === 'loading' && llm.progress != null ? ` ${llm.progress}%` : ''}`];
+  if (llm.loadTimeMs != null) parts.push(`loaded in ${Math.round(llm.loadTimeMs / 1000)} s`);
+  if (llm.averageMs != null) parts.push(`${llm.averageMs} ms per judgment`);
+  if (llm.error) parts.push(`error: ${llm.error}`);
+  parts.push(`Search: ${st.search.permission ? 'permitted' : 'no permission'}, ${st.search.requests} requests, ${st.search.cacheHits} cache hits${st.search.lastError ? `, last error: ${st.search.lastError}` : ''}`);
+  $('layer3Info').textContent = parts.join(' · ');
 }
 
 async function refreshCaches() {
@@ -130,6 +156,8 @@ async function save() {
     overrideMinutes: readRadio('override', 'overrideCustom', 5),
     questionableFrictionMode: $('questionableFrictionMode').value,
     questionableFrictionSeconds: Number($('questionableFrictionSeconds').value),
+    llmEnabled: $('llmEnabled').checked,
+    searchEnabled: $('searchEnabled').checked,
     allowedDomains: state.settings.allowedDomains,
     blockedDomains: state.settings.blockedDomains,
   };
@@ -215,6 +243,29 @@ $('tryButton').addEventListener('click', async () => {
   const r = await send('classifyText', { title: $('tryTitle').value });
   $('tryResult').textContent = JSON.stringify(r, null, 2);
   refreshModel();
+});
+$('llmEnabled').addEventListener('change', async (e) => {
+  if (e.target.checked && !(await requestOrigins(HF_ORIGINS))) e.target.checked = false;
+});
+$('searchEnabled').addEventListener('change', async (e) => {
+  if (e.target.checked && !(await requestOrigins([DDG_ORIGIN]))) e.target.checked = false;
+});
+$('warmUpLlm').addEventListener('click', async () => {
+  if (!(await requestOrigins(HF_ORIGINS))) return;
+  await send('saveSettings', { llmEnabled: true });
+  $('llmEnabled').checked = true;
+  $('layer3Info').textContent = 'LLM: downloading… (this can take a few minutes the first time)';
+  const poll = setInterval(refreshLayer3, 1500);
+  await send('warmUpLlm');
+  clearInterval(poll);
+  await refreshLayer3();
+});
+$('testLayer3').addEventListener('click', async () => {
+  const title = $('tryTitle').value.trim() || 'Linus Torvalds Interview';
+  $('layer3Result').textContent = 'Running… (loads the LLM on first use)';
+  const r = await send('testLayer3', { title });
+  $('layer3Result').textContent = JSON.stringify(r, null, 2);
+  refreshLayer3();
 });
 $('clearCaches').addEventListener('click', async () => {
   await send('clearCaches');

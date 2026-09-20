@@ -106,6 +106,23 @@ embedding classifier then returns `null`, the pipeline falls back to
 `unknown / source: fallback`, and the default policy allows the page. Any exception inside a
 classifier is caught by `ClassifierPipeline`, recorded in `trace`, and the next layer runs.
 
+## 2b. Layer 3 — local LLM with optional DuckDuckGo context (`classifier/llmClassifier.js`)
+
+Gate: `settings.llmEnabled && context.previous?.confident === false`. The pipeline supplies the
+embedding result as `previous` (see §6). Steps:
+
+1. If `settings.searchEnabled` and the `https://html.duckduckgo.com/*` permission is granted,
+   `DuckDuckGoRetriever.search(title)` → `retrieval` cache (`ret:v1:ddg:<query>`, 6 h) →
+   otherwise one GET of `html.duckduckgo.com/html/?q=<title>` (6 s timeout, credentials
+   omitted), parsed into ≤5 `{title, domain, snippet}`.
+2. `LlmManager.judge()` builds a chat prompt (goal, title, site, nearest anchors, ≤3 results),
+   generates ≤40 tokens greedily (20 s timeout), and parses the first verdict word.
+3. Result: `source: llm | llm+search`, classification from the LLM, embedding numbers copied
+   over, `confident: true`. `null` on any failure ⇒ embedding verdict is returned.
+
+The final-classification cache key fingerprint includes `llmEnabled`/`searchEnabled`, so
+toggling the layer never serves a decision made under the other configuration.
+
 ## 3. Policy (`classifier/policyEngine.js`)
 
 ```

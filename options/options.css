@@ -33,3 +33,5 @@ button.primary { background: var(--ok); color: white; border-color: transparent;
 pre { background: rgba(128,128,128,.1); padding: 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; }
 #grants { font-size: 13px; }
 #grants button { margin-left: 8px; font-size: 12px; }
+label.check { display: flex; gap: 8px; align-items: flex-start; }
+label.check input { margin-top: 3px; }

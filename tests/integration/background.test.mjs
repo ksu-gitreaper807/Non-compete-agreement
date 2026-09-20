@@ -21,6 +21,10 @@ before(async () => {
   h = createFakeBrowser({ root });
   globalThis.browser = h.browser;
   globalThis.GOALGUARD_MODEL_LOADER = loadNodeModel;
+  globalThis.llmChats = 0;
+  globalThis.ddgCalls = [];
+  globalThis.GOALGUARD_LLM_LOADER = async () => ({ chat: async (msgs) => { globalThis.llmChats++; return msgs[1].content.includes('Web context') ? 'RELEVANT. The interview is about Linux kernel development.' : 'IRRELEVANT. Looks like celebrity content.'; } });
+  globalThis.GOALGUARD_FETCH = async (url) => { globalThis.ddgCalls.push(url); return { ok: true, status: 200, text: async () => (await import('node:fs')).readFileSync(new URL('../data/ddg-sample.html', import.meta.url), 'utf8') }; };
   await import('../../src/background/background.js');
   await sleep(100);
 });
@@ -190,6 +194,52 @@ test('classification and embedding caches persist across a background restart', 
   const reborn = new PersistentCache('classification');
   await reborn.ensureLoaded();
   assert.ok(reborn.size >= 1, 'entries reload from storage');
+});
+
+test('layer 3 is off by default: questionable stays with the embedding layer', async () => {
+  const r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
+  assert.equal(r.classification, 'questionable');
+  assert.equal(r.source, 'embedding');
+  assert.equal(globalThis.llmChats, 0);
+});
+
+test('LLM enabled: questionable pages get a final LLM verdict; relevant pages never touch it', async () => {
+  await h.sendMessage('saveSettings', { llmEnabled: true });
+  await sleep(50);
+  const r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
+  assert.equal(r.source, 'llm', JSON.stringify(r));
+  assert.equal(r.classification, 'irrelevant');
+  assert.equal(globalThis.llmChats, 1);
+  const cached = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=other' });
+  assert.equal(cached.cached, true);
+  assert.equal(globalThis.llmChats, 1, 'final decision cached: no second LLM call');
+  await h.sendMessage('classifyText', { title: 'Linux Virtual Memory Explained', url: 'https://youtube.com/watch?v=vm' });
+  assert.equal(globalThis.llmChats, 1, 'confident embedding result skips the LLM');
+  const st = await h.sendMessage('getLayer3Status');
+  assert.equal(st.llm.status, 'ready');
+});
+
+test('search enabled without host permission → LLM runs without context; with permission → llm+search and cached', async () => {
+  await h.sendMessage('saveSettings', { searchEnabled: true });
+  await sleep(50);
+  let r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
+  assert.equal(r.source, 'llm');
+  assert.equal(globalThis.ddgCalls.length, 0, 'no network call without permission');
+  h.grantOrigin('https://html.duckduckgo.com/*');
+  await h.sendMessage('clearCaches');
+  r = await h.sendMessage('classifyText', { title: 'Linus Torvalds Interview', url: 'https://youtube.com/watch?v=q' });
+  assert.equal(r.source, 'llm+search', JSON.stringify(r));
+  assert.equal(r.classification, 'relevant');
+  assert.equal(globalThis.ddgCalls.length, 1);
+  assert.ok(globalThis.ddgCalls[0].includes(encodeURIComponent('Linus Torvalds Interview')));
+  assert.ok(!globalThis.ddgCalls[0].includes('youtube'), 'URL never sent');
+  const probe = await h.sendMessage('testLayer3', { title: 'Linus Torvalds Interview' });
+  assert.equal(probe.retrieval.cached, true, 'retrieval cache hit: no second DuckDuckGo request');
+  assert.equal(globalThis.ddgCalls.length, 1);
+  const stats = await h.sendMessage('getCacheStats');
+  assert.ok(stats.retrieval.size >= 1);
+  await h.sendMessage('saveSettings', { llmEnabled: false, searchEnabled: false });
+  await sleep(50);
 });
 
 test('user allow rule overrides the semantic verdict', async () => {

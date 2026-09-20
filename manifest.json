@@ -11,6 +11,9 @@
       "data_collection_permissions": {
         "required": [
           "none"
+        ],
+        "optional": [
+          "websiteContent"
         ]
       }
     }
@@ -45,6 +48,13 @@
     "open_in_tab": true
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
-  }
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://html.duckduckgo.com https://huggingface.co https://*.huggingface.co https://*.hf.co"
+  },
+  "optional_host_permissions": [
+    "https://html.duckduckgo.com/*",
+    "https://huggingface.co/*",
+    "https://cdn-lfs.huggingface.co/*",
+    "https://cdn-lfs-us-1.huggingface.co/*",
+    "https://cas-bridge.xethub.hf.co/*"
+  ]
 }

@@ -130,6 +130,20 @@
     </section>
 
     <section>
+      <h2>Ambiguity resolver (optional)</h2>
+      <p class="help">Off by default. When the embedding model is unsure (a <em>questionable</em> verdict), a small local LLM can make the final call, optionally after fetching a few DuckDuckGo results for context. The LLM (~400 MB, Qwen2.5-0.5B-Instruct) is downloaded once from Hugging Face and then runs entirely on this computer.</p>
+      <label class="check"><input type="checkbox" id="llmEnabled" /> Use local LLM for questionable pages</label>
+      <label class="check"><input type="checkbox" id="searchEnabled" /> Fetch DuckDuckGo context for the LLM (sends the page <strong>title</strong> to duckduckgo.com — never the URL)</label>
+      <p class="help" id="permissionHint" hidden>Firefox will ask for permission to contact duckduckgo.com / huggingface.co when you enable these.</p>
+      <p id="layer3Info">Status: —</p>
+      <div class="row">
+        <button id="warmUpLlm" type="button">Download &amp; load LLM now</button>
+        <button id="testLayer3" type="button">Test with the title above</button>
+      </div>
+      <pre id="layer3Result"></pre>
+    </section>
+
+    <section>
       <h2>Caches</h2>
       <p class="help">Local caches of final decisions, title embeddings and (future) retrieval results. Entries expire and are bounded; keys include the model version and your current goal/thresholds/rules, so changing settings never reuses stale decisions.</p>
       <pre id="cacheStats">—</pre>

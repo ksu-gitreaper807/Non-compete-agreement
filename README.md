@@ -14,8 +14,9 @@ is relevant to your **weekly goal** and adds deliberate friction when it is not.
 
 Classification is **semantic, not domain based** — YouTube is fine for a lecture and gets
 friction for gaming videos — and it runs **entirely on your machine** with a 33 MB int8 copy
-of `BGE-small-en-v1.5` bundled inside the extension. No cloud API, no telemetry, no network
-traffic at all.
+of `BGE-small-en-v1.5` bundled inside the extension. No cloud API, no telemetry, and by
+default no network traffic at all. An **optional** third layer (off by default) lets a small
+local LLM resolve ambiguous pages, optionally grounded with a DuckDuckGo search.
 
 ---
 
@@ -92,6 +93,12 @@ goalguard/
 │   ├── model/
 │   │   ├── embeddingModel.js     Transformers.js wrapper (CLS pooling, L2 normalise)
 │   │   └── modelManager.js       lazy load, single instance, LRU embedding cache, status
+│   ├── llm/                      OPTIONAL layer 3
+│   │   ├── llmModel.js           Transformers.js text-generation (Qwen2.5-0.5B-Instruct q4)
+│   │   ├── llmManager.js         lazy load, progress, timeout, in-flight dedupe
+│   │   └── prompt.js             chat prompt + verdict parsing
+│   ├── retrieval/
+│   │   └── duckduckgo.js         DuckDuckGo HTML search, parser, retrieval cache
 │   ├── blocking/
 │   │   ├── frictionManager.js    authoritative countdown / grant state machine
 │   │   └── blocker.js            friction page URL helpers
@@ -194,7 +201,11 @@ GoalGuard is built so that it *cannot* leak data:
 * Classification runs locally in the extension's own process.
 * Page titles, URLs and browsing history are **never uploaded**.
 * No AI API, no analytics SDK, no telemetry, no remote configuration.
-* The extension requests **no host permissions** and makes **no `fetch` calls**.
+* The extension requests **no host permissions** by default and makes **no `fetch` calls**
+  unless you opt in to layer 3. Then, and only then: the LLM weights are downloaded once from
+  `huggingface.co`, and — if you also enable search — the page **title** (never the URL) is
+  sent to `html.duckduckgo.com` for `questionable` pages. Both are `optional_host_permissions`
+  that Firefox asks you to approve and that you can revoke in `about:addons`.
 * Stored data is minimal: settings, rules, anchors, per-day counters, a bounded list of
   recent sessions (domain + truncated title + classification + duration; **no URLs**), and a
   bounded cache of `hash(title) → embedding`.
@@ -239,6 +250,20 @@ distraction topics (gaming, celebrity news, shopping, social feeds, …).
 Every result stores `classification`, `score`, `positiveSimilarity`, `negativeSimilarity`,
 `goalSimilarity`, `nearestPositive`, `nearestNegative`, `source` and `reason`.
 
+**Layer 3 — local LLM + DuckDuckGo context (opt-in)** (`llmClassifier.js`): runs only when
+Layer 2 returned `questionable` (`confident: false`) *and* the user enabled it in Options. If
+search is also enabled and the `html.duckduckgo.com` host permission was granted, the page
+**title only** is sent to DuckDuckGo and the top three results are added to the prompt. The LLM
+answers `RELEVANT | QUESTIONABLE | IRRELEVANT` + a reason; `source` becomes `llm` or
+`llm+search`, and the embedding score/similarities are kept on the result for transparency.
+Any failure (no weights, timeout, unparsable answer) returns `null` and the embedding verdict
+stands. Final decisions are cached like any other, so the LLM runs at most once per page title.
+
+Model: `onnx-community/Qwen2.5-0.5B-Instruct` (q4, ≈400 MB), downloaded once from Hugging Face
+into the browser's Cache storage on first use, then fully local. Qwen3-0.6B needs Transformers.js
+v3; swap `LLM_MODEL_ID` after upgrading `vendor/transformers.min.js`. Expect several seconds to
+load and roughly 1–3 s per judgment on CPU, which is why it is gated behind `questionable`.
+
 **Policy engine** (`policyEngine.js`) maps classification → `allow | warn | block` and picks
 the friction duration. Defaults: relevant→allow, questionable→warn (short friction),
 irrelevant→block (normal friction), unknown→allow. All configurable.
@@ -270,7 +295,7 @@ updates; also flushed by the minute alarm).
 | --- | --- | --- | --- | --- |
 | `classification` | `cls:v1:<config-fingerprint>:<domain>:<normalised title>` | 7 days | 2000 | final result (classification, score, similarities, source, reason) |
 | `embedding` | `emb:v1:<model-version>:<hash(normalised title)>` | 30 days | 500 | Float32Array(384), stored as 4-decimal numbers |
-| `retrieval` | `ret:v1:<provider>:<normalised query>` | 6 hours | 300 | reserved for a future DuckDuckGo/LLM layer |
+| `retrieval` | `ret:v1:ddg:<normalised query>` | 6 hours | 300 | DuckDuckGo results `{title, domain, snippet}[]` |
 
 Constants live in `CACHE_DEFAULTS` (`FINAL_CLASSIFICATION_TTL`, `EMBEDDING_TTL`,
 `SEARCH_RESULT_TTL`, `MAX_*_CACHE_ENTRIES`).
@@ -382,7 +407,7 @@ Limits: see [Caching](#caching); sessions 2000 / 14 days retention (`schema.js �
 
 ```bash
 npm test                 # everything (≈30 s)
-npm run test:unit        # 89 tests, no model needed
+npm run test:unit        # 101 tests, no model needed
 npm run test:model       # real BGE model: embeddings, similarity ordering, fixture titles
 npm run test:integration # boots the real background.js against a fake `browser` API
 ```
@@ -404,12 +429,18 @@ Coverage highlights:
   embedding keys.
 * **Session tracker:** per-class accumulation, override accounting, midnight split, bounded logs.
 * **Controller:** allow / block / warn flows, failing classifier is skipped, cache, ignored URLs.
+* **Layer 3:** verdict parsing, prompt content, DuckDuckGo HTML parsing, retrieval cache +
+  dedupe + permission gating + failure → null, LLM manager lazy load / dedupe / unavailable,
+  classifier gating (disabled, confident, no previous), `llm` vs `llm+search`, pipeline
+  fallback to the embedding verdict on LLM error.
 * **Integration:** goal → anchors → relevant page allowed → irrelevant page redirected →
   countdown → Continue refused early / accepted later → grant → no re-redirect → statistics →
   revoke → re-friction; tab switch mid-countdown → background tab `inactive` → return gives a
   full timer → stale generation refused; cache hit + irrelevant page still gets friction;
-  caches survive a background restart and contain no URLs; Go Back; user allow rule
-  overriding the model; unsupported URLs.
+  caches survive a background restart and contain no URLs; layer 3 off by default; LLM
+  (injected fake) decides questionable pages and is skipped for confident ones and cache hits;
+  search blocked without host permission, `llm+search` with it, title-only query, second probe
+  served from the retrieval cache; Go Back; user allow rule overriding the model; unsupported URLs.
 
 Fixture set used by the model tests (functional, not scientific):
 
@@ -458,7 +489,11 @@ is meant to fill.
 * **Title-only signal.** Pages with generic titles ("YouTube", "Home") are judged on the URL
   path; single-page apps that update titles late may be classified twice.
 * **Thresholds are heuristics** tuned on a 133-title set by the author; calibrate per user.
-* **Ambiguous content** skews relevant when the goal topic is mentioned (see benchmark).
+* **Ambiguous content** skews relevant when the goal topic is mentioned (see benchmark);
+  layer 3 exists to fix this but its accuracy has not been benchmarked here, and its real
+  download/inference path could not be exercised in the sandbox (no network) — the tests use
+  an injected fake LLM and fake fetch.
+* **Layer 3 cost.** ≈400 MB one-time download, ~1 GB RAM while loaded, seconds per judgment.
 * **Memory.** The resident model costs roughly 150–200 MB while loaded; it is loaded lazily
   and only when a title reaches Layer 2.
 * **Friction, not DRM.** Private windows, other browsers, or disabling the add-on bypass it by
@@ -469,27 +504,22 @@ is meant to fill.
   the real model; manual verification in a desktop Firefox profile is still recommended
   before wider use (see Installation).
 
-## Future LLM integration
+## Using and verifying layer 3
 
-The pipeline is a list of `Classifier` instances (`src/classifier/classifier.js`):
+1. Options → **Ambiguity resolver** → tick *Use local LLM*; approve the Hugging Face permission.
+   Optionally tick *Fetch DuckDuckGo context* and approve `duckduckgo.com`.
+2. Click **Download & load LLM now** (one-time, a few minutes) — the status line shows progress.
+3. Type an ambiguous title (e.g. `Linus Torvalds Interview`) in *Try a title* and press
+   **Test with the title above**: you see the DuckDuckGo results that were fetched (or
+   `cached: true`) and the LLM's raw answer + parsed verdict.
+4. Browse normally: results whose `source` is `llm` / `llm+search` in the popup came from
+   layer 3; `embedding` means layer 2 was confident and the LLM was skipped. The Caches panel
+   shows the `retrieval` namespace filling up; the layer-3 status line counts requests and
+   judgments.
 
-```js
-class Classifier { get name() {} async classify(context) {} }   // return result or null
-```
-
-`ClassifierPipeline` runs them in order; the embedding layer marks `QUESTIONABLE` results as
-`confident: false`. Adding a local LLM (e.g. Qwen3-0.6B through Transformers.js or a native
-messaging host) means:
-
-1. `src/classifier/llmClassifier.js` implementing `classify(context)` that returns `null`
-   unless the previous result was unconfident (the pipeline can pass the prior result in
-   `context.previous`).
-2. Registering it after `EmbeddingClassifier` in `background.js`.
-3. Optionally implementing `AnchorGenerator.generate(goal)` in `anchors.js` with the LLM so
-   positive/negative anchors are produced automatically.
-
-No other module needs to change: policy, friction, tracking and UI consume the same
-`ClassificationResult` shape.
+The `Classifier` interface (`src/classifier/classifier.js`) is unchanged, so another backend
+(e.g. a native-messaging host running llama.cpp) only has to implement `chat(messages)` and be
+passed to `LlmManager`.
 
 ## Acknowledgements
 

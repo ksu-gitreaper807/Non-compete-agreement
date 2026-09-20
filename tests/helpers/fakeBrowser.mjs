@@ -81,7 +81,12 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
   const alarms = { create: () => {}, onAlarm: makeEvent() };
   const idle = { onStateChanged: makeEvent(), setDetectionInterval: () => {} };
 
-  const browser = { storage, runtime, tabs: tabsApi, windows, alarms, idle };
+  const grantedOrigins = new Set();
+  const permissions = {
+    contains: async ({ origins = [] }) => origins.every((o) => grantedOrigins.has(o)),
+    request: async ({ origins = [] }) => { origins.forEach((o) => grantedOrigins.add(o)); return true; },
+  };
+  const browser = { storage, runtime, tabs: tabsApi, windows, alarms, idle, permissions };
 
   const harness = {
     browser,
@@ -114,6 +119,7 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
       return results.find((r) => r !== undefined);
     },
     tab: (id) => tabs.get(id),
+    grantOrigin: (o) => grantedOrigins.add(o),
     tick: async () => alarms.onAlarm.emit({ name: 'goalguard-tick' }),
   };
   return harness;

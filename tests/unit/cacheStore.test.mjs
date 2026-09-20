@@ -44,6 +44,7 @@ test('config fingerprint changes with goal, thresholds, rules, anchors and model
   assert.notEqual(f, classificationConfigFingerprint({ ...base, modelVersion: 'm2' }));
   assert.notEqual(f, classificationConfigFingerprint({ ...base, settings: { ...base.settings, relevantThreshold: 0.7 } }));
   assert.notEqual(f, classificationConfigFingerprint({ ...base, rules: { allow: ['x'], block: [] } }));
+  assert.notEqual(f, classificationConfigFingerprint({ ...base, settings: { ...base.settings, llmEnabled: true } }));
 });
 
 test('hit / miss / expired', async () => {

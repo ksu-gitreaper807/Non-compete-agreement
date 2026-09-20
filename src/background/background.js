@@ -8,6 +8,9 @@ import * as storage from '../storage/storage.js';
 import { DEFAULT_LIMITS, FRICTION_STATE } from '../storage/schema.js';
 import { RegexClassifier } from '../classifier/regexClassifier.js';
 import { EmbeddingClassifier } from '../classifier/embeddingClassifier.js';
+import { LLMClassifier } from '../classifier/llmClassifier.js';
+import { LlmManager, createExtensionLlmLoader } from '../llm/llmManager.js';
+import { DuckDuckGoRetriever, DDG_ORIGIN_PATTERN } from '../retrieval/duckduckgo.js';
 import { generateAnchors } from '../classifier/anchors.js';
 import { ModelManager, createExtensionLoader, MODEL_VERSION } from '../model/modelManager.js';
 import { PersistentCache, float32Codec } from '../storage/cacheStore.js';
@@ -63,13 +66,24 @@ async function boot() {
     modelVersion: MODEL_VERSION,
   });
 
+  const llmManager = new LlmManager({
+    loader: globalThis.GOALGUARD_LLM_LOADER ?? createExtensionLlmLoader(browserApi.runtime),
+  });
+  const retriever = new DuckDuckGoRetriever({
+    cache: caches.retrieval,
+    fetchImpl: globalThis.GOALGUARD_FETCH ?? globalThis.fetch?.bind(globalThis),
+    hasPermission: () => hasOriginPermission(DDG_ORIGIN_PATTERN),
+  });
+
   const classifiers = [
     new RegexClassifier(),
     new EmbeddingClassifier({
       embed: (text) => modelManager.embed(text),
       isAvailable: () => modelManager.isAvailable(),
     }),
-    // Future: new LLMClassifier(...) for QUESTIONABLE results.
+    // Layer 3: only consulted for unconfident (questionable) embedding results, and only when
+    // the user enabled it in Options.
+    new LLMClassifier({ llm: llmManager, retriever }),
   ];
 
   const controller = new Controller({
@@ -105,7 +119,7 @@ async function boot() {
 
   browserApi.alarms.create(ALARM_TICK, { periodInMinutes: 1 });
 
-  app = { sessions, friction, modelManager, controller, tabMonitor, caches };
+  app = { sessions, friction, modelManager, llmManager, retriever, controller, tabMonitor, caches };
   return app;
 }
 
@@ -115,6 +129,14 @@ function ensureBooted() {
     throw e;
   });
   return bootPromise;
+}
+
+async function hasOriginPermission(origin) {
+  try {
+    return await browserApi.permissions.contains({ origins: [origin] });
+  } catch {
+    return false;
+  }
 }
 
 /** Regenerates anchors when the goal changed and the user has not customised them. */
@@ -234,6 +256,40 @@ const router = createMessageRouter({
   async getModelStatus() {
     const { modelManager } = await ensureBooted();
     return modelManager.getStatus();
+  },
+
+  async getLayer3Status() {
+    const { llmManager, retriever } = await ensureBooted();
+    return {
+      llm: llmManager.getStatus(),
+      search: { ...retriever.getStatus(), permission: await hasOriginPermission(DDG_ORIGIN_PATTERN) },
+    };
+  },
+
+  async warmUpLlm() {
+    const { llmManager } = await ensureBooted();
+    try {
+      await llmManager.ensureLoaded();
+    } catch {
+      /* status carries the error */
+    }
+    return llmManager.getStatus();
+  },
+
+  /** Direct probe of layer 3 for the Options "test" buttons; bypasses the confidence gate. */
+  async testLayer3({ title }) {
+    const { llmManager, retriever, controller } = await ensureBooted();
+    const { settings } = await controller.getConfig();
+    const out = { title };
+    if (settings.searchEnabled) out.retrieval = await retriever.search(title);
+    if (settings.llmEnabled) {
+      try {
+        out.verdict = await llmManager.judge({ goal: settings.weeklyGoal, title, retrieval: out.retrieval });
+      } catch (e) {
+        out.llmError = String(e?.message ?? e);
+      }
+    }
+    return out;
   },
 
   async warmUpModel() {
