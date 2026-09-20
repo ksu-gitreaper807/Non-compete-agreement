@@ -127,7 +127,8 @@ goalguard/
 ├── vendor/                       transformers.min.js 2.17.2 + onnxruntime-web WASM
 ├── tests/  unit/ · model/ · integration/ · data/titles.json · helpers/
 ├── scripts/  benchmark.mjs · benchmark-layers.mjs · check-manifest.mjs · package.mjs
-└── docs/CLASSIFICATION.md        detailed algorithm documentation
+├── web-ext-config.mjs            web-ext lint/sign config (file set derived from package.mjs)
+└── docs/  CLASSIFICATION.md (algorithm) · SIGNING.md (.xpi + Mozilla signing)
 ```
 
 **Why an MV3 event page and not a service worker?** Firefox supports `background.scripts`
@@ -227,7 +228,9 @@ GoalGuard is built so that it *cannot* leak data:
 * Everything lives in `browser.storage.local` and is deleted with **Options → Reset** or by
   uninstalling.
 
-The manifest declares `data_collection_permissions: { required: ["none"] }` for AMO.
+The manifest declares `data_collection_permissions: { required: ["none"], optional: ["websiteContent"] }`
+for AMO: nothing is collected by default, and the optional entry covers the title-only
+DuckDuckGo lookup you can explicitly enable in the AI layers.
 
 ## Classification algorithm
 
