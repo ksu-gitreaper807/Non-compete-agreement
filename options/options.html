@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GoalGuard settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>GoalGuard</h1>
+      <p class="lede">Everything here stays on this computer. Classification runs locally with BGE-small-en-v1.5; nothing is uploaded.</p>
+      <p class="status" id="status"></p>
+    </header>
+
+    <section>
+      <h2>Weekly goal</h2>
+      <label>What are you focusing on this week?
+        <input id="weeklyGoal" type="text" maxlength="500" placeholder="Study operating systems and C++" />
+      </label>
+      <label>Weekly productive-time target (minutes)
+        <input id="weeklyTargetMinutes" type="number" min="0" step="30" />
+      </label>
+    </section>
+
+    <section>
+      <h2>Thresholds</h2>
+      <p class="help">Score = 0.5 + 2.5 × (positive similarity − negative similarity), clamped to 0–1. Defaults are heuristics, not calibrated values.</p>
+      <div class="row">
+        <label>Relevant at or above <input id="relevantThreshold" type="number" min="0" max="1" step="0.01" /></label>
+        <label>Questionable at or above <input id="questionableThreshold" type="number" min="0" max="1" step="0.01" /></label>
+      </div>
+      <p class="help">Anything below the questionable threshold is irrelevant.</p>
+      <details>
+        <summary>Try a title</summary>
+        <div class="row">
+          <input id="tryTitle" type="text" placeholder="Linux Virtual Memory Explained" />
+          <button id="tryButton" type="button">Classify</button>
+        </div>
+        <pre id="tryResult"></pre>
+      </details>
+    </section>
+
+    <section>
+      <h2>Policy</h2>
+      <div class="row">
+        <label>Relevant → <select id="policyRelevant"><option value="allow">Allow</option><option value="warn">Warn</option><option value="block">Block</option></select></label>
+        <label>Questionable → <select id="policyQuestionable"><option value="allow">Allow</option><option value="warn">Warn</option><option value="block">Block</option></select></label>
+        <label>Irrelevant → <select id="policyIrrelevant"><option value="allow">Allow</option><option value="warn">Warn</option><option value="block">Block</option></select></label>
+        <label>Unclassified → <select id="policyUnknown"><option value="allow">Allow</option><option value="warn">Warn</option><option value="block">Block</option></select></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Friction &amp; override</h2>
+      <fieldset>
+        <legend>Friction delay (blocked pages)</legend>
+        <div class="choices" id="frictionChoices">
+          <label><input type="radio" name="friction" value="5" /> 5 s</label>
+          <label><input type="radio" name="friction" value="10" /> 10 s</label>
+          <label><input type="radio" name="friction" value="15" /> 15 s</label>
+          <label><input type="radio" name="friction" value="30" /> 30 s</label>
+          <label><input type="radio" name="friction" value="60" /> 60 s</label>
+          <label><input type="radio" name="friction" value="custom" /> Custom <input id="frictionCustom" type="number" min="1" max="3600" class="inline" /> s</label>
+        </div>
+      </fieldset>
+      <div class="row">
+        <label>Questionable pages
+          <select id="questionableFrictionMode">
+            <option value="none">No friction</option>
+            <option value="short">Short friction</option>
+            <option value="normal">Normal friction</option>
+          </select>
+        </label>
+        <label>Short friction (seconds) <input id="questionableFrictionSeconds" type="number" min="1" max="3600" /></label>
+      </div>
+      <fieldset>
+        <legend>Temporary access after Continue</legend>
+        <div class="choices" id="overrideChoices">
+          <label><input type="radio" name="override" value="5" /> 5 min</label>
+          <label><input type="radio" name="override" value="10" /> 10 min</label>
+          <label><input type="radio" name="override" value="15" /> 15 min</label>
+          <label><input type="radio" name="override" value="custom" /> Custom <input id="overrideCustom" type="number" min="1" max="1440" class="inline" /> min</label>
+        </div>
+      </fieldset>
+      <div id="grants"></div>
+    </section>
+
+    <section>
+      <h2>Rules</h2>
+      <p class="help">Rules run before the AI model. Precedence: your block rules → your allow rules → built-in block patterns → goal terms in the title → AI classifier. Regexes are case-insensitive and matched against the title and URL.</p>
+      <div class="two">
+        <div>
+          <h3>Allowed regexes</h3>
+          <ul class="list" id="allowList"></ul>
+          <form class="add" data-list="allow"><input type="text" placeholder="\bvirtual memory\b" /><button>Add</button></form>
+        </div>
+        <div>
+          <h3>Blocked regexes</h3>
+          <ul class="list" id="blockList"></ul>
+          <form class="add" data-list="block"><input type="text" placeholder="\bnetflix\b" /><button>Add</button></form>
+        </div>
+        <div>
+          <h3>Allowed domains</h3>
+          <ul class="list" id="allowedDomainsList"></ul>
+          <form class="add" data-list="allowedDomains"><input type="text" placeholder="cppreference.com" /><button>Add</button></form>
+        </div>
+        <div>
+          <h3>Blocked domains</h3>
+          <ul class="list" id="blockedDomainsList"></ul>
+          <form class="add" data-list="blockedDomains"><input type="text" placeholder="reddit.com" /><button>Add</button></form>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Semantic anchors</h2>
+      <p class="help">The page title is compared against these phrases. Positive anchors are generated from your goal; edit them freely. One phrase per line.</p>
+      <div class="two">
+        <label>Positive<textarea id="anchorsPositive" rows="8"></textarea></label>
+        <label>Negative<textarea id="anchorsNegative" rows="8"></textarea></label>
+      </div>
+      <button id="regenerateAnchors" type="button">Regenerate from goal</button>
+    </section>
+
+    <section>
+      <h2>AI classifier</h2>
+      <p id="modelInfo">Status: unknown</p>
+      <button id="warmUp" type="button">Load model now</button>
+    </section>
+
+    <section class="danger">
+      <h2>Reset</h2>
+      <button id="resetAll" type="button">Delete all GoalGuard data</button>
+    </section>
+
+    <div class="savebar">
+      <button id="save" type="button" class="primary">Save settings</button>
+      <span id="saveStatus"></span>
+    </div>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

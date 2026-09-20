@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GoalGuard</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="top">
+    <span class="brand">GoalGuard</span>
+    <label class="switch" title="Pause or resume GoalGuard">
+      <input type="checkbox" id="enabled" />
+      <span></span>
+    </label>
+  </header>
+
+  <section class="block">
+    <h2>Goal</h2>
+    <form id="goalForm" class="goal-form">
+      <input id="goalInput" type="text" placeholder="e.g. Study operating systems and C++" maxlength="500" autocomplete="off" />
+      <button type="submit" id="goalSave">Save</button>
+    </form>
+    <p class="goal-text" id="goalText" hidden></p>
+  </section>
+
+  <section class="block">
+    <h2>Current page</h2>
+    <p class="page-title" id="pageTitle">—</p>
+    <p class="verdict" id="verdict"><span class="badge" id="badge">…</span> <span id="verdictText"></span></p>
+    <p class="meta" id="meta"></p>
+  </section>
+
+  <section class="block">
+    <h2>Today</h2>
+    <table class="stats">
+      <tr><td>Productive</td><td id="todayRelevant">0m</td></tr>
+      <tr><td>Questionable</td><td id="todayQuestionable">0m</td></tr>
+      <tr><td>Distraction</td><td id="todayIrrelevant">0m</td></tr>
+      <tr class="sub"><td>after overrides</td><td id="todayOverride">0m</td></tr>
+    </table>
+  </section>
+
+  <section class="block">
+    <h2>Weekly goal progress</h2>
+    <div class="progress"><div id="progressBar"></div></div>
+    <p class="meta" id="progressText"></p>
+    <p class="meta" id="frictionText"></p>
+  </section>
+
+  <footer class="bottom">
+    <span class="model" id="modelStatus">AI classifier: idle</span>
+    <a href="#" id="openOptions">Settings</a>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

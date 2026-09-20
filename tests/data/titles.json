@@ -1,0 +1,800 @@
+[
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "OSTEP - Processes",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Linux Virtual Memory Explained",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Operating Systems: Three Easy Pieces",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Understanding the Linux Kernel Scheduler",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "How page tables work - paging and TLBs",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Deadlocks and mutexes in xv6",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "File system implementation: inodes and directories",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Context switching cost on modern CPUs",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "POSIX threads tutorial",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "System calls explained: fork, exec, wait",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Introduction to concurrency and locks - lecture 12",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Writing a simple kernel in C++",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "C++ smart pointers: unique_ptr and shared_ptr",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Memory allocators: malloc internals",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Interrupt handling in operating systems",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Best Gaming PCs of 2026",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Top 10 Netflix shows this weekend",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Helldivers 2 patch notes",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Kim Kardashian's new fashion line",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Amazon Prime Day deals on headphones",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "NBA playoffs: game 7 highlights",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Funniest cat videos compilation",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Taylor Swift tour dates announced",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "How to make sourdough bread at home",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Cheap flights to Bali - travel guide",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Elden Ring boss guide",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Reddit - r/memes: fresh memes",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Celebrity gossip roundup",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Instagram - photos and videos",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "TikTok - Make Your Day",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Linus Torvalds Interview",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "History of Bell Labs",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Why programmers love mechanical keyboards",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "The best laptops for students 2026",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Tech layoffs continue in 2026",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Steve Jobs biography review",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Hacker News",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study operating systems and C++",
+    "goalKey": "os",
+    "title": "Stack Overflow developer survey results",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "C++ templates explained",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Move semantics and rvalue references",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "cppreference.com - std::vector",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "RAII in modern C++",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Learn C++ - constexpr and consteval",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "C++20 concepts tutorial",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "CMake for beginners",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Debugging segfaults with gdb",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Undefined behavior in C++",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Fortnite season 9 trailer",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Best pizza places in New York",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Stock market rally continues",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Premier League transfer news",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Watch movies online free",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Zara summer sale",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Bjarne Stroustrup on the future of programming",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Rust vs C++: which should you learn?",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Why Google is moving away from C++",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn C++ programming",
+    "goalKey": "cpp",
+    "title": "Top programming languages in 2026",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Eigenvalues and eigenvectors - 3Blue1Brown",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Integration by parts explained",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Linear algebra lecture 5: vector spaces",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Proof of the fundamental theorem of calculus",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Matrix multiplication intuition",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Khan Academy: limits and continuity",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Taylor series expansion examples",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Gram-Schmidt orthogonalization",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Multivariable calculus: gradients and directional derivatives",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Call of Duty tournament finals",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Celebrity wedding photos",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Best budget smartphones 2026",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Pok\u00e9mon Go community day",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Fashion week highlights",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Recipe: chocolate lava cake",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "The man who knew infinity - movie review",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Terence Tao wins new prize",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "Why kids hate math class",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Study mathematics: linear algebra and calculus",
+    "goalKey": "math",
+    "title": "History of the number zero",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Attention is all you need - paper explained",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "PyTorch tutorial: training a CNN",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Gradient descent visualized",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Backpropagation from scratch in NumPy",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Fine-tuning BERT for text classification",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Overfitting vs regularization",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Stanford CS229 lecture 3: logistic regression",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Transformers explained visually",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Hugging Face course - tokenizers",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "GTA 6 release date leaks",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Reality TV recap episode 4",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Nike sneaker drop this Friday",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "World Cup qualifiers results",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Funny fails compilation",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Dating app horror stories",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "OpenAI CEO interview on AI safety",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "Will AI take your job?",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "NVIDIA stock hits record high",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Learn machine learning and deep learning",
+    "goalKey": "ml",
+    "title": "The AI hype cycle explained",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "5x5 strength training program",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "How to fix your squat form",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Couch to 5k running plan",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Marathon training: long run tips",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Protein intake for muscle growth",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Deadlift technique tutorial",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Zone 2 cardio explained",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Mobility routine for runners",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Progressive overload explained",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Minecraft survival episode 12",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Oscars red carpet looks",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Best 4K TVs on sale",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Political debate highlights",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Anime spring season preview",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Twitter trending topics",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Cristiano Ronaldo's daily routine",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "The rise of fitness influencers",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Best running shoes 2026 review",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Fitness: strength training and running",
+    "goalKey": "fit",
+    "title": "Athlete diet documentary",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Crime and Punishment - chapter summary",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Book review: Sapiens by Yuval Noah Harari",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Why you should read Moby-Dick",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Project Gutenberg - Pride and Prejudice",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "The best non-fiction books of the decade",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "How to read more books this year",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Literary analysis of 1984 by George Orwell",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Goodreads - my reading list",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Understanding Dostoevsky's themes",
+    "expected": "relevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Valorant ranked gameplay",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Kardashians season finale",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Black Friday laptop deals",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Champions League final live",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Try not to laugh challenge",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Snapchat stories",
+    "expected": "irrelevant"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Author Stephen King on Twitter",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Netflix adapts classic novel into series",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Audible vs paper books debate",
+    "expected": "ambiguous"
+  },
+  {
+    "goal": "Reading classic novels and non-fiction books",
+    "goalKey": "read",
+    "title": "Barnes & Noble store closures",
+    "expected": "ambiguous"
+  }
+]
