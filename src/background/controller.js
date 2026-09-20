@@ -6,7 +6,8 @@ import { buildClassificationText, extractDomain, isSupportedUrl, normalizeTitle 
 import { ClassifierPipeline, makeResult } from '../classifier/classifier.js';
 import { decide, requiresFriction, DECISION } from '../classifier/policyEngine.js';
 import { CLASSIFICATION, FRICTION_STATE } from '../storage/schema.js';
-import { LruCache } from '../utils/lruCache.js';
+import { PersistentCache } from '../storage/cacheStore.js';
+import { classificationKey, classificationConfigFingerprint } from '../storage/cacheKeys.js';
 
 export class Controller {
   /**
@@ -18,28 +19,39 @@ export class Controller {
    * @param {(tabId: number, url: string) => Promise<void>} deps.navigate
    * @param {(params: Object) => string} deps.blockedPageUrl
    * @param {(tabId: number) => Promise<boolean>} [deps.isBlockedPage]
-   * @param {number} [deps.classificationCacheSize]
+   * @param {PersistentCache} [deps.classificationCache]  final-decision cache (persistent)
+   * @param {() => string} [deps.modelVersion]             part of the cache fingerprint
    */
   constructor(deps) {
     this.deps = deps;
     this.pipeline = new ClassifierPipeline(deps.classifiers, {
       fallback: () => makeResult(CLASSIFICATION.UNKNOWN, 'fallback', 'No signal available; allowed by default'),
     });
-    this.classificationCache = new LruCache(deps.classificationCacheSize ?? 1000);
+    this.classificationCache = deps.classificationCache ?? new PersistentCache('classification', { persist: false });
+    this.modelVersion = deps.modelVersion ?? (() => 'none');
     this.config = null;
-    this.tabResults = new Map(); // tabId -> last outcome
+    this.configFingerprint = null;
+    this.tabResults = new Map(); // tabId -> last outcome (tab-scoped, not a classification cache)
     this.inFlight = new Map(); // tabId -> promise
+    this.activeTabId = null;
   }
 
   async getConfig() {
-    if (!this.config) this.config = await this.deps.loadConfig();
+    if (!this.config) {
+      this.config = await this.deps.loadConfig();
+      this.configFingerprint = classificationConfigFingerprint({ ...this.config, modelVersion: this.modelVersion() });
+    }
     return this.config;
   }
 
-  /** Called on storage changes so new settings/rules/anchors take effect immediately. */
+  /**
+   * Called on storage changes so new settings/rules/anchors take effect immediately.
+   * The persistent cache is not cleared: its keys embed a config fingerprint, so entries from
+   * the old configuration simply stop matching and age out.
+   */
   invalidateConfig() {
     this.config = null;
-    this.classificationCache.clear();
+    this.configFingerprint = null;
     this.tabResults.clear();
   }
 
@@ -61,15 +73,14 @@ export class Controller {
       return { ...makeResult(CLASSIFICATION.UNKNOWN, 'no-title', 'Page has no title or readable URL'), domain, title: normalizedTitle, text };
     }
 
-    const cacheKey = `${domain}|${text.toLowerCase()}`;
-    const cached = this.classificationCache.get(cacheKey);
-    if (cached) return { ...cached, cached: true };
-
     const context = { url, domain, title: normalizedTitle, text, goal, settings, rules, anchors };
-    const result = await this.pipeline.classify(context);
-    const outcome = { ...result, domain, title: normalizedTitle, text };
-    this.classificationCache.set(cacheKey, outcome);
-    return outcome;
+    const key = classificationKey({ domain, text, fingerprint: this.configFingerprint });
+    const { value, cached, deduplicated } = await this.classificationCache.getOrCompute(key, async () => {
+      const result = await this.pipeline.classify(context);
+      const { trace, ...stored } = result; // trace is diagnostic; keep cached entries small
+      return { ...stored, domain, title: normalizedTitle, text, cachedAt: Date.now(), trace };
+    });
+    return cached ? { ...value, cached: true } : deduplicated ? { ...value, deduplicated: true } : value;
   }
 
   /**
@@ -109,8 +120,9 @@ export class Controller {
       return previous;
     }
 
-    // Leaving a friction page for a different domain abandons that countdown.
-    await this.deps.friction.abandonForTab(tabId, { exceptDomain: domain });
+    // Navigating the tab to a different page abandons that tab's countdown (a completed
+    // timer never transfers to a materially different page).
+    await this.deps.friction.abandonForTab(tabId, { exceptUrl: url });
 
     const classification = await this.classifyPage({ url, title });
     const policy = decide(classification.classification, config.settings);
@@ -132,15 +144,17 @@ export class Controller {
 
     if (requiresFriction(policy) && !grant) {
       const state = await this.deps.friction.startCountdown({
+        tabId,
         domain,
+        url,
         title: classification.title,
         classification: classification.classification,
         decision: policy.decision,
         score: classification.score,
         frictionSeconds: policy.frictionSeconds,
-        tabId,
       });
       outcome.frictionState = state.state;
+      outcome.generation = state.generation;
       this.tabResults.set(tabId, outcome);
       await this.deps.sessions.stop();
       await this.deps.navigate(
@@ -179,32 +193,41 @@ export class Controller {
     });
   }
 
-  /** Friction page asks for its state; restarts the countdown if it expired while away. */
+  /**
+   * Friction page asks for its state. Starts a fresh full countdown when none is running for
+   * this tab (first visit, after a tab-switch reset, or after the grace window expired) —
+   * but only while the tab is actually the active one, so a background tab cannot pre-run
+   * its timer.
+   */
   async getFrictionView({ domain, url, title, classification, decision, score, tabId }) {
     const config = await this.getConfig();
-    let state = await this.deps.friction.getState(domain);
+    let state = await this.deps.friction.getState({ tabId, domain });
     if (state.state === FRICTION_STATE.BLOCKED) {
       const policy = decide(classification, config.settings);
       if (!requiresFriction(policy)) {
         // Policy changed since the redirect: let the user through.
         return { state: FRICTION_STATE.UNLOCKED, remainingMs: 0, releaseImmediately: true, settings: publicSettings(config.settings) };
       }
+      if (this.activeTabId !== null && this.activeTabId !== tabId) {
+        return { state: FRICTION_STATE.BLOCKED, remainingMs: 0, inactive: true, goal: config.settings.weeklyGoal, settings: publicSettings(config.settings), url };
+      }
       state = await this.deps.friction.startCountdown({
+        tabId,
         domain,
+        url,
         title,
         classification,
         decision,
         score,
         frictionSeconds: policy.frictionSeconds,
-        tabId,
       });
     }
     return { ...state, goal: config.settings.weeklyGoal, settings: publicSettings(config.settings), url };
   }
 
-  async continueFromFriction({ domain, url, tabId }) {
+  async continueFromFriction({ domain, url, tabId, generation }) {
     const config = await this.getConfig();
-    const result = await this.deps.friction.grantAccess({ domain, overrideMinutes: config.settings.overrideMinutes });
+    const result = await this.deps.friction.grantAccess({ tabId, domain, generation, overrideMinutes: config.settings.overrideMinutes });
     if (result.ok && typeof tabId === 'number' && url) {
       this.tabResults.delete(tabId);
       await this.deps.navigate(tabId, url);
@@ -212,9 +235,32 @@ export class Controller {
     return result;
   }
 
-  async leaveFriction({ domain, tabId }) {
-    await this.deps.friction.abandonCountdown(domain, { reason: 'go-back' });
+  async leaveFriction({ tabId }) {
+    await this.deps.friction.abandonCountdown(tabId, { reason: 'go-back' });
     if (typeof tabId === 'number') this.tabResults.delete(tabId);
+  }
+
+  /**
+   * Tab lifecycle: the active tab changed. A running countdown on the previously active tab
+   * is reset (full timer again on return); completed countdowns and grants are untouched.
+   */
+  async onActiveTabChanged(newTabId) {
+    const previous = this.activeTabId;
+    this.activeTabId = newTabId;
+    if (previous === null || previous === newTabId) return false;
+    const reset = await this.deps.friction.onTabDeactivated(previous);
+    if (reset) this.tabResults.delete(previous);
+    return reset;
+  }
+
+  /** Window lost focus entirely: treat as leaving the active tab. */
+  async onFocusLost() {
+    const previous = this.activeTabId;
+    this.activeTabId = null;
+    if (previous === null) return false;
+    const reset = await this.deps.friction.onTabDeactivated(previous);
+    if (reset) this.tabResults.delete(previous);
+    return reset;
   }
 
   /** Called when a temporary grant expires; the caller re-evaluates matching tabs. */

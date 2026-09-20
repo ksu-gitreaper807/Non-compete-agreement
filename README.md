@@ -97,7 +97,9 @@ goalguard/
 │   │   └── blocker.js            friction page URL helpers
 │   ├── storage/
 │   │   ├── schema.js             defaults, enums, day/week keys
-│   │   └── storage.js            browser.storage.local wrapper with in-memory fallback
+│   │   ├── storage.js            browser.storage.local wrapper with in-memory fallback
+│   │   ├── cacheStore.js         PersistentCache: TTL + LRU + debounced persistence + dedupe
+│   │   └── cacheKeys.js          versioned key builders and config fingerprint
 │   └── utils/  text.js · regex.js · lruCache.js
 ├── popup/                        goal, current verdict, today's stats, weekly progress
 ├── options/                      goal, thresholds, policy, friction, rules, anchors, model
@@ -257,21 +259,62 @@ close to the goal and to distractions".
 The defaults were picked by sweeping the benchmark (see below); they are **heuristics, not
 validated values**. Use *Options → Try a title* to inspect scores for your own goal and adjust.
 
+## Caching
+
+Three independent persistent caches (`src/storage/cacheStore.js`), each its own
+`storage.local` key (`cache:classification`, `cache:embedding`, `cache:retrieval`), loaded
+into memory once and written back debounced (3 s after a change; 15 s for recency-only
+updates; also flushed by the minute alarm).
+
+| Namespace | Key | TTL | Max entries | Value |
+| --- | --- | --- | --- | --- |
+| `classification` | `cls:v1:<config-fingerprint>:<domain>:<normalised title>` | 7 days | 2000 | final result (classification, score, similarities, source, reason) |
+| `embedding` | `emb:v1:<model-version>:<hash(normalised title)>` | 30 days | 500 | Float32Array(384), stored as 4-decimal numbers |
+| `retrieval` | `ret:v1:<provider>:<normalised query>` | 6 hours | 300 | reserved for a future DuckDuckGo/LLM layer |
+
+Constants live in `CACHE_DEFAULTS` (`FINAL_CLASSIFICATION_TTL`, `EMBEDDING_TTL`,
+`SEARCH_RESULT_TTL`, `MAX_*_CACHE_ENTRIES`).
+
+* **Key normalisation** (`normalizeTitleForKey`): NFKC, lower-case, typographic quotes/dashes
+  unified, whitespace collapsed, decorative edge punctuation trimmed. Internal punctuation is
+  kept (`C++` ≠ `C`). Domains are lower-cased without `www.`; URLs are never part of a key, so
+  `watch?v=A` and `watch?v=B` with the same title share one entry while different titles do not.
+* **Invalidation.** The classification key embeds a fingerprint of goal, thresholds, domain
+  lists, regex rules, anchors and `MODEL_VERSION` (`bge-small-en-v1.5-int8`). Changing any of
+  them makes old entries unreachable; they age out via TTL/LRU. Bumping a `*_KEY_VERSION` or
+  `CACHE_SCHEMA_VERSION` invalidates everything at once. *Options → Caches → Clear* wipes them.
+* **Eviction** happens only on insert: expired entries first, then least-recently-used.
+* **Deduplication.** `getOrCompute` shares one in-flight promise per key, so two tabs opening
+  the same page trigger one pipeline run and one embedding inference.
+* **Observability.** Set `DEBUG_CACHE = true` in `background.js` (or
+  `globalThis.GOALGUARD_DEBUG_CACHE`) for `[CACHE] classification HIT/MISS/expired/evicted`
+  lines; Options shows live hit/miss/evict counters.
+* **Privacy.** Cached values contain domain + normalised title + scores. No URLs, no page bodies.
+
+A cache hit answers *what the page is*; it never answers *whether the user has waited*. Friction
+state is separate and per tab (below).
+
 ## Friction and timed override
 
 Implemented in `src/blocking/frictionManager.js`; the friction page is a dumb view.
 
 ```
-open distracting site
+open distracting site (tab 12)
    ▼
-background: startCountdown(domain)       unlockAt = now + frictionSeconds   (persisted)
+background: startCountdown(tabId 12)     unlockAt = now + frictionSeconds, generation = n  (persisted)
    ▼
 blocked.html polls getFrictionState      shows remaining time; Continue disabled
+   │
+   ├─ user switches tab / window blurs → onTabDeactivated(12): running countdown deleted
+   │      return → getFrictionState starts a *fresh full* countdown, generation = n+1
+   │
+   ├─ tab navigates to another page     → countdown deleted (hash-only changes are the same page)
    ▼
-now ≥ unlockAt → UNLOCKED                Continue enabled (2-minute grace window)
+now ≥ unlockAt → UNLOCKED                Continue enabled (2-minute grace window); tab switches
+                                          no longer reset it — completion wins
    ▼
-Continue → grantAccess(domain)           rejected unless now ≥ unlockAt
-                                          grant = { grantedAt: now, expiresAt: now + overrideMinutes }
+Continue → grantAccess(tab, generation)  rejected unless now ≥ unlockAt AND generation is current
+                                          grant = { domain, grantedAt: now, expiresAt: now + overrideMinutes }
    ▼
 TEMPORARILY_ALLOWED for that domain      time still counted as distraction + overrideMs
    ▼
@@ -280,16 +323,26 @@ expiry (alarm every minute)              open tabs on that domain re-enter frict
 
 Guarantees:
 
-* **Authoritative timestamps.** The page never decides; it only asks. Refreshing, reopening,
-  DOM/CSS edits or re-triggering the redirect return the *same* `unlockAt`.
-* **Domain scoped.** Grants are keyed by registrable host (`youtube.com` covers `m.youtube.com`).
+* **Authoritative timestamps.** The page never decides; it only asks. Refreshing the friction
+  page returns the *same* `unlockAt`; DOM/CSS edits change nothing.
+* **Per-tab timers, tab-switch reset.** `tabs.onActivated` / `windows.onFocusChanged` tell the
+  controller which tab is in front. A countdown that is still running on the tab you left is
+  invalidated (not paused): coming back means the full delay again. Rapid switching therefore
+  can never accumulate progress. A background tab's friction page is told `inactive` and cannot
+  start a timer until it is active.
+* **Generations against races.** Every (re)start increments `generation`. The page sends the
+  generation it saw; `grantAccess` refuses stale ones, so a callback from a timer that was reset
+  milliseconds earlier cannot grant access. Completion is checked against the persisted
+  `unlockAt`, so if the timer finished before the switch, the switch does not undo it.
+* **Domain scoped grants.** Grants are keyed by registrable host (`youtube.com` covers
+  `m.youtube.com`) and are independent of tabs.
 * **Go Back** cancels the countdown and records `frictionAbandoned` — never screen time.
 * **Questionable pages** use the same page in a visually distinct "warn" style with a
   relevance percentage; the policy decides `none | short | normal` friction.
 * **Recovery.** If the background is unreachable the page shows a direct link to the original
   URL, so nobody is ever trapped. Disabling the extension in `about:addons` works normally.
 
-Statistics per day: `frictionTriggered`, `frictionCompleted`, `frictionAbandoned`, `overrides`,
+Statistics per day: `frictionTriggered`, `frictionCompleted`, `frictionAbandoned`, `frictionReset`, `overrides`,
 `overrideMs` (time spent after overrides), plus `relevantMs / questionableMs / irrelevantMs`.
 
 ## Data model
@@ -312,23 +365,24 @@ Statistics per day: `frictionTriggered`, `frictionCompleted`, `frictionAbandoned
   },
   "rules":   { "allow": ["\\bOSTEP\\b"], "block": ["\\bHelldivers\\b"] },
   "anchors": { "positive": ["operating systems", "virtual memory"], "negative": ["video games and gaming"], "generatedFromGoal": "…" },
-  "friction": { "countdowns": { "pcmag.com": { "unlockAt": 0, "startedAt": 0, "tabId": 3 } },
+  "friction": { "countdowns": { "3": { "tabId": 3, "domain": "pcmag.com", "url": "…", "generation": 7, "startedAt": 0, "unlockAt": 0 } },
                 "grants":     { "youtube.com": { "grantedAt": 0, "expiresAt": 0 } } },
   "statistics": { "days": { "2026-09-20": { "relevantMs": 0, "irrelevantMs": 0, "overrideMs": 0, "frictionTriggered": 0, "overrides": 0 } } },
   "sessions": [ { "domain": "pcmag.com", "title": "Best Gaming PCs…", "classification": "irrelevant", "startedAt": 0, "endedAt": 0, "overridden": true } ],
   "currentSession": null,
-  "embeddingCache": [ ["fnv1a-hash", [384 floats]] ]
+  "cache:classification": { "schemaVersion": 1, "entries": [["cls:v1:…", { "value": {…}, "createdAt": 0, "lastAccessedAt": 0, "expiresAt": 0 }]] },
+  "cache:embedding":      { "schemaVersion": 1, "entries": [["emb:v1:bge-small-en-v1.5-int8:…", { "value": [384 numbers], … }]] },
+  "cache:retrieval":      { "schemaVersion": 1, "entries": [] }
 }
 ```
 
-Limits (`schema.js → DEFAULT_LIMITS`): 500 cached embeddings, 1000 cached classifications
-(in memory), 2000 sessions / 14 days retention.
+Limits: see [Caching](#caching); sessions 2000 / 14 days retention (`schema.js → DEFAULT_LIMITS`).
 
 ## Testing
 
 ```bash
-npm test                 # everything (≈8 s)
-npm run test:unit        # 63 tests, no model needed
+npm test                 # everything (≈30 s)
+npm run test:unit        # 89 tests, no model needed
 npm run test:model       # real BGE model: embeddings, similarity ordering, fixture titles
 npm run test:integration # boots the real background.js against a fake `browser` API
 ```
@@ -340,13 +394,22 @@ Coverage highlights:
 * **Similarity:** identical / orthogonal / opposite / zero vectors, argmax selection.
 * **Embedding classifier:** pure threshold logic, positive/negative anchor scoring with a
   deterministic fake model, anchor caching, unavailable-model fall-through.
-* **Friction manager:** countdown timing, early-Continue rejection, reload persistence, grant
-  expiry, domain scoping, abandonment, tab cleanup, grace window.
+* **Friction manager:** countdown timing, early-Continue rejection, reload persistence,
+  tab-switch reset → full timer on return, repeated switching never completes, completed
+  timer survives a switch, stale generation refused, independent per-tab timers, navigation
+  restart (hash-only preserved), grant expiry, domain scoping, abandonment, tab-close cleanup.
+* **Caches:** deterministic/normalised keys, domain/title misses, TTL expiry, LRU eviction,
+  expired-before-LRU, restart persistence, schema-version mismatch ignored, Float32 codec,
+  concurrent dedupe, prefix invalidation, config-fingerprint invalidation, model-versioned
+  embedding keys.
 * **Session tracker:** per-class accumulation, override accounting, midnight split, bounded logs.
 * **Controller:** allow / block / warn flows, failing classifier is skipped, cache, ignored URLs.
 * **Integration:** goal → anchors → relevant page allowed → irrelevant page redirected →
   countdown → Continue refused early / accepted later → grant → no re-redirect → statistics →
-  revoke → re-friction; Go Back; user allow rule overriding the model; unsupported URLs.
+  revoke → re-friction; tab switch mid-countdown → background tab `inactive` → return gives a
+  full timer → stale generation refused; cache hit + irrelevant page still gets friction;
+  caches survive a background restart and contain no URLs; Go Back; user allow rule
+  overriding the model; unsupported URLs.
 
 Fixture set used by the model tests (functional, not scientific):
 

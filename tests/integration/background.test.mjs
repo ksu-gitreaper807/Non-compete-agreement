@@ -77,7 +77,7 @@ test('irrelevant page → friction page → countdown → continue → temporary
   assert.ok(view.remainingMs > 0 && view.remainingMs <= 1000);
 
   // Pressing Continue early is rejected by the background.
-  let cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id });
+  let cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id, generation: view.generation });
   assert.equal(cont.ok, false);
 
   // A "reload" of the friction page keeps the same countdown.
@@ -89,7 +89,7 @@ test('irrelevant page → friction page → countdown → continue → temporary
   view = await h.sendMessage('getFrictionState', { ...params, tabId: Number(params.tabId) });
   assert.equal(view.state, 'UNLOCKED');
 
-  cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id });
+  cont = await h.sendMessage('continueFromFriction', { domain: 'pcmag.com', url, tabId: id, generation: view.generation });
   assert.equal(cont.ok, true);
   assert.equal(cont.state, 'TEMPORARILY_ALLOWED');
   assert.equal(h.navigations.at(-1).url, url, 'background navigated back to the site');
@@ -120,10 +120,76 @@ test('go back abandons the countdown and records the statistic', async () => {
   const id = await h.openTab({ url, title: 'Netflix' });
   await settle();
   assert.equal(h.navigations.length, before + 1);
-  await h.sendMessage('leaveFriction', { domain: 'netflix.com', tabId: id });
+  await h.sendMessage('leaveFriction', { tabId: id });
   const stats = await h.sendMessage('getStatistics');
   assert.ok(stats.today.frictionAbandoned >= 1);
   await h.browser.tabs.remove(id);
+});
+
+test('switching tabs during the countdown resets it; returning restarts a full timer', async () => {
+  await h.sendMessage('saveSettings', { frictionSeconds: 2 });
+  await sleep(50);
+  const url = 'https://www.twitch.tv/somechannel';
+  const id = await h.openTab({ url, title: 'Some Channel - Twitch' });
+  await settle(600);
+  const params = Object.fromEntries(new URL(h.navigations.at(-1).url).searchParams);
+  params.tabId = Number(params.tabId);
+  let view = await h.sendMessage('getFrictionState', params);
+  assert.equal(view.state, 'COUNTING_DOWN');
+  const firstGeneration = view.generation;
+  await sleep(700);
+  view = await h.sendMessage('getFrictionState', params);
+  assert.ok(view.remainingMs < 1400);
+
+  const other = await h.openTab({ url: 'https://pages.cs.wisc.edu/~remzi/OSTEP/', title: 'OSTEP' });
+  await settle();
+  const hidden = await h.sendMessage('getFrictionState', params);
+  assert.equal(hidden.state, 'BLOCKED');
+  assert.equal(hidden.inactive, true, 'background tab cannot run its timer');
+
+  await sleep(1500); // would have completed the original timer by now
+  await h.activateTab(id);
+  await settle();
+  view = await h.sendMessage('getFrictionState', params);
+  assert.equal(view.state, 'COUNTING_DOWN');
+  assert.ok(view.remainingMs > 1800, `full timer again, got ${view.remainingMs}`);
+  assert.notEqual(view.generation, firstGeneration);
+
+  // A stale Continue with the old generation is refused even once time has passed.
+  await sleep(2100);
+  const stale = await h.sendMessage('continueFromFriction', { domain: 'twitch.tv', url, tabId: id, generation: firstGeneration });
+  assert.equal(stale.ok, false);
+  const fresh = await h.sendMessage('continueFromFriction', { domain: 'twitch.tv', url, tabId: id, generation: view.generation });
+  assert.equal(fresh.ok, true);
+  const stats = await h.sendMessage('getStatistics');
+  assert.ok(stats.today.frictionReset >= 1);
+  await h.sendMessage('revokeGrant', { domain: 'twitch.tv' });
+  await h.browser.tabs.remove(id);
+  await h.browser.tabs.remove(other);
+});
+
+test('classification and embedding caches persist across a background restart', async () => {
+  const title = 'Understanding the Linux Kernel Scheduler in depth';
+  const first = await h.sendMessage('classifyText', { title, url: 'https://blog.example/x' });
+  assert.equal(first.source, 'embedding');
+  const second = await h.sendMessage('classifyText', { title: `  ${title} `, url: 'https://blog.example/y?utm_source=z' });
+  assert.equal(second.cached, true);
+  const stats = await h.sendMessage('getCacheStats');
+  assert.ok(stats.classification.hits >= 1);
+  assert.ok(stats.embedding.size >= 1);
+
+  // Flush (the minute alarm does this in production) and inspect what is on disk.
+  await h.tick();
+  const stored = h.store.get('cache:classification');
+  assert.ok(stored && stored.entries.length >= 1);
+  const json = JSON.stringify(stored);
+  assert.ok(!json.includes('blog.example/x'), 'cache must not contain URLs');
+
+  // Simulate an event-page restart: fresh PersistentCache over the same storage.
+  const { PersistentCache } = await import('../../src/storage/cacheStore.js');
+  const reborn = new PersistentCache('classification');
+  await reborn.ensureLoaded();
+  assert.ok(reborn.size >= 1, 'entries reload from storage');
 });
 
 test('user allow rule overrides the semantic verdict', async () => {

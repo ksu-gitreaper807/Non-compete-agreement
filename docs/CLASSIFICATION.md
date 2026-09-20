@@ -15,8 +15,13 @@ goal, in the order the code executes it. File references are relative to `src/`.
 Pages with no goal set, or with neither a title nor readable URL words, produce
 `classification: "unknown"` (`source: no-goal` / `no-title`) and never touch the model.
 
-A per-domain+text classification cache (LRU, 1000 entries, in memory) short-circuits repeated
-visits. It is cleared whenever settings, rules or anchors change.
+A persistent final-classification cache (`storage/cacheStore.js`, 7-day TTL, 2000 entries,
+LRU) short-circuits repeated visits. Its key is
+`cls:v1:<fingerprint(goal, thresholds, rules, anchors, model)>:<domain>:<normalised title>`, so a
+settings change makes old entries unreachable instead of requiring a clear. Concurrent misses
+for the same key share one pipeline run. Note the cache is consulted *after* Layer 1 would be
+anyway — rules are cheaper than a lookup and are part of the fingerprint, so a cached entry is
+always consistent with the current rules.
 
 ## 1. Layer 1 — deterministic rules (`classifier/regexClassifier.js`)
 
@@ -125,16 +130,25 @@ else
    → session tracking started with { classification, overridden: !!grant }
 ```
 
-Friction state machine per domain:
+Friction state machine (countdowns per **tab**, grants per **domain**):
 
 ```
-BLOCKED ──startCountdown──► COUNTING_DOWN ──(now ≥ unlockAt)──► UNLOCKED ──grantAccess──► TEMPORARILY_ALLOWED
-   ▲                              │                                 │                              │
-   └────── abandon / tab closed ◄─┘          (2-min grace expiry) ◄─┘        (expiresAt reached) ◄─┘
+BLOCKED ──startCountdown(tab)──► COUNTING_DOWN ──(now ≥ unlockAt)──► UNLOCKED ──grantAccess──► TEMPORARILY_ALLOWED
+   ▲                                 │      │                           │                              │
+   │        tab deactivated / window blur   │       (2-min grace expiry)│         (expiresAt reached)  │
+   │        navigation to another page      │                           │                              │
+   └─────────────────────────────────────◄──┴───────────────────────────┴──────────────────────────────┘
 ```
 
-`grantAccess` is the only transition that can produce a grant and it verifies `now ≥ unlockAt`
-against the persisted timestamp — not against anything the page sends.
+* `onTabDeactivated(tabId)` deletes a countdown only while `now < unlockAt`; an UNLOCKED
+  countdown is preserved (completion wins over the switch).
+* Every `startCountdown` that creates a timer assigns `generation = ++counter` (persisted).
+  `grantAccess` requires `now ≥ unlockAt` **and** the presented generation to equal the current
+  one; a stale callback from a reset timer is refused.
+* `getFrictionView` refuses to start a countdown for a tab that is not the active tab
+  (`controller.activeTabId`), so a background friction page cannot pre-run its timer.
+* Everything is timestamp-based and persisted; no `setTimeout` is involved in authorisation,
+  so event-page suspension cannot shorten or bypass a wait.
 
 ## 5. Model execution (`model/embeddingModel.js`, `model/modelManager.js`)
 
@@ -144,10 +158,10 @@ against the persisted timestamp — not against anything the page sends.
 * `env.allowRemoteModels = false`, `env.localModelPath = runtime.getURL('models/')`,
   browser Cache API disabled (files are already local), one WASM thread, no proxy worker.
 * Pipeline: `feature-extraction`, `{ pooling: 'cls', normalize: true }`, int8 weights.
-* `ModelManager` loads lazily on the first `embed()` call, shares one in-flight promise between
-  concurrent callers, keeps the model resident, and caches
-  `FNV-1a(lower(normalisedTitle)) → Float32Array(384)` in a 500-entry LRU that is persisted
-  (rounded to 4 decimals) to `storage.local` five seconds after changes.
+* `ModelManager` loads lazily on the first `embed()` call, shares one in-flight load promise,
+  keeps the model resident, and caches embeddings in a persistent 500-entry, 30-day LRU keyed
+  `emb:v1:<MODEL_VERSION>:<FNV-1a(normalised title)>` (values rounded to 4 decimals, written
+  debounced). Concurrent `embed()` calls for the same text share one inference.
 
 Measured on the development machine (Node 22, x86-64, single WASM thread): model load
 ≈ 0.4 s, inference 6–9 ms per title, resident memory ≈ +195 MB RSS.

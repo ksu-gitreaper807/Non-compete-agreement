@@ -89,11 +89,17 @@ export function createFakeBrowser({ root, now = () => Date.now() } = {}) {
     navigations,
     async openTab({ url, title }) {
       const id = nextTabId++;
+      const previousTabId = [...tabs.values()].find((t) => t.active)?.id;
       for (const t of tabs.values()) t.active = false;
       tabs.set(id, { id, url, title, active: true, windowId: 1 });
-      await tabsApi.onActivated.emit({ tabId: id, windowId: 1 });
+      await tabsApi.onActivated.emit({ tabId: id, previousTabId, windowId: 1 });
       await tabsApi.onUpdated.emit(id, { status: 'complete', title }, structuredClone(tabs.get(id)));
       return id;
+    },
+    async activateTab(id) {
+      const previousTabId = [...tabs.values()].find((t) => t.active)?.id;
+      for (const t of tabs.values()) t.active = t.id === id;
+      await tabsApi.onActivated.emit({ tabId: id, previousTabId, windowId: 1 });
     },
     async navigateTab(id, { url, title }) {
       const tab = tabs.get(id);

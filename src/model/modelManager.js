@@ -4,9 +4,12 @@
  * Status transitions:  idle -> loading -> ready
  *                                     \-> unavailable (after failure; retried after a cool-down)
  */
-import { loadEmbeddingModel } from './embeddingModel.js';
-import { hashString, normalizeTitle } from '../utils/text.js';
-import { LruCache } from '../utils/lruCache.js';
+import { loadEmbeddingModel, MODEL_ID } from './embeddingModel.js';
+import { PersistentCache, float32Codec } from '../storage/cacheStore.js';
+import { embeddingKey } from '../storage/cacheKeys.js';
+
+/** Identifies the exact weights; part of every embedding cache key. */
+export const MODEL_VERSION = `${MODEL_ID}-int8`;
 
 export const MODEL_STATUS = Object.freeze({
   IDLE: 'idle',
@@ -21,11 +24,10 @@ export class ModelManager {
   /**
    * @param {Object} options
    * @param {() => Promise<import('./embeddingModel.js').EmbeddingModel>} options.loader
-   * @param {number} [options.cacheSize]
-   * @param {(entries: Array) => Promise<void>} [options.persistCache]
-   * @param {Array} [options.initialCache]
+   * @param {PersistentCache} [options.cache]   embedding cache (TTL + LRU, persistent)
+   * @param {string} [options.modelVersion]
    */
-  constructor({ loader, cacheSize = 500, persistCache = null, initialCache = [] }) {
+  constructor({ loader, cache = null, modelVersion = MODEL_VERSION }) {
     this.loader = loader;
     this.status = MODEL_STATUS.IDLE;
     this.error = null;
@@ -34,10 +36,8 @@ export class ModelManager {
     this.lastFailureAt = 0;
     this.loadTimeMs = null;
     this.stats = { inferences: 0, totalInferenceMs: 0, cacheHits: 0 };
-    this.cache = new LruCache(cacheSize);
-    for (const [key, value] of initialCache) this.cache.set(key, Float32Array.from(value));
-    this.persistCache = persistCache;
-    this.persistTimer = null;
+    this.modelVersion = modelVersion;
+    this.cache = cache ?? new PersistentCache('embedding', { persist: false, ...float32Codec });
   }
 
   getStatus() {
@@ -88,35 +88,25 @@ export class ModelManager {
     return this.loadPromise;
   }
 
-  static cacheKey(text) {
-    return hashString(normalizeTitle(text).toLowerCase());
+  cacheKey(text) {
+    return embeddingKey({ modelVersion: this.modelVersion, text });
   }
 
-  /** Embed with cache. Throws if the model cannot be loaded. */
+  /**
+   * Embed with a persistent, model-versioned cache and in-flight deduplication.
+   * Throws if the model cannot be loaded.
+   */
   async embed(text) {
-    const key = ModelManager.cacheKey(text);
-    const cached = this.cache.get(key);
-    if (cached) {
-      this.stats.cacheHits++;
-      return cached;
-    }
-    const model = await this.ensureLoaded();
-    const started = performance.now();
-    const vector = await model.embed(text);
-    this.stats.inferences++;
-    this.stats.totalInferenceMs += performance.now() - started;
-    this.cache.set(key, vector);
-    this.schedulePersist();
-    return vector;
-  }
-
-  schedulePersist() {
-    if (!this.persistCache || this.persistTimer) return;
-    this.persistTimer = setTimeout(() => {
-      this.persistTimer = null;
-      const entries = this.cache.entries().map(([k, v]) => [k, Array.from(v, (x) => Math.round(x * 1e4) / 1e4)]);
-      this.persistCache(entries).catch((e) => console.warn('[GoalGuard] cache persist failed', e));
-    }, 5000);
+    const { value, cached } = await this.cache.getOrCompute(this.cacheKey(text), async () => {
+      const model = await this.ensureLoaded();
+      const started = performance.now();
+      const vector = await model.embed(text);
+      this.stats.inferences++;
+      this.stats.totalInferenceMs += performance.now() - started;
+      return vector;
+    });
+    if (cached) this.stats.cacheHits++;
+    return value;
   }
 
   async unload() {

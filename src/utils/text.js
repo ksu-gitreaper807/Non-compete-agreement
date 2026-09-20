@@ -111,3 +111,34 @@ export function splitGoalPhrases(goal) {
     .map((p) => p.replace(/^(my|the|some|and)\s+/i, '').replace(/[.!]+$/, '').trim())
     .filter((p) => p.length >= 2);
 }
+
+const TRACKING_PARAMS = /^(utm_\w+|fbclid|gclid|dclid|msclkid|mc_\w+|igshid|ref|ref_src|ref_url|si|feature|_ga|yclid|vero_id|_hsenc|_hsmi|spm)$/i;
+
+/** Remove common tracking parameters and fragments; keeps content-identifying params (e.g. ?v=). */
+export function stripTrackingParams(url) {
+  const parsed = parseUrl(url);
+  if (!parsed) return '';
+  for (const key of [...parsed.searchParams.keys()]) {
+    if (TRACKING_PARAMS.test(key)) parsed.searchParams.delete(key);
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+/**
+ * Canonical title form for cache keys: Unicode NFKC, lower-case, typographic quotes/dashes
+ * unified, whitespace collapsed, decorative edge punctuation trimmed. Internal punctuation is
+ * kept so "C++" and "C" do not collide.
+ */
+export function normalizeTitleForKey(title) {
+  return normalizeTitle(title)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-|•·:;,.!?]+|[\s\-|•·:;,.!?]+$/g, '')
+    .trim();
+}

@@ -62,3 +62,16 @@ test('anchor embeddings are cached across calls', async () => {
   await c.classify({ ...ctx, text: 'Gaming PC' });
   assert.equal(calls, after + 1);
 });
+
+test('ModelManager uses a model-versioned embedding cache and dedupes', async () => {
+  const { ModelManager } = await import('../../src/model/modelManager.js');
+  let calls = 0;
+  const loader = async () => ({ embed: async () => { calls++; await new Promise((r) => setTimeout(r, 5)); return Float32Array.from([1, 0, 0]); } });
+  const m1 = new ModelManager({ loader, modelVersion: 'v1' });
+  await Promise.all([m1.embed('Hello World'), m1.embed('hello   world')]);
+  assert.equal(calls, 1);
+  await m1.embed('Hello World');
+  assert.equal(m1.stats.cacheHits, 1);
+  assert.match(m1.cacheKey('x'), /^emb:v1:v1:/);
+  assert.notEqual(m1.cacheKey('x'), new ModelManager({ loader, modelVersion: 'v2' }).cacheKey('x'));
+});

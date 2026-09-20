@@ -34,7 +34,16 @@ async function load() {
   $('anchorsPositive').value = state.anchors.positive.join('\n');
   $('anchorsNegative').value = state.anchors.negative.join('\n');
   for (const key of Object.keys(LIST_CONFIG)) renderList(key);
-  await Promise.all([refreshModel(), refreshGrants()]);
+  await Promise.all([refreshModel(), refreshGrants(), refreshCaches()]);
+}
+
+async function refreshCaches() {
+  const stats = await send('getCacheStats');
+  if (!stats || stats.error) return;
+  const fmtTtl = (ms) => (ms >= 86400000 ? `${Math.round(ms / 86400000)} d` : `${Math.round(ms / 3600000)} h`);
+  $('cacheStats').textContent = Object.values(stats)
+    .map((c) => `${c.namespace.padEnd(15)} ${String(c.size).padStart(5)} / ${c.maxEntries} entries · TTL ${fmtTtl(c.ttlMs)} · hits ${c.hits} · misses ${c.misses} · expired ${c.expired} · evicted ${c.evicted} · deduped ${c.dedupeHits}`)
+    .join('\n');
 }
 
 function setRadio(name, value, customId) {
@@ -206,6 +215,10 @@ $('tryButton').addEventListener('click', async () => {
   const r = await send('classifyText', { title: $('tryTitle').value });
   $('tryResult').textContent = JSON.stringify(r, null, 2);
   refreshModel();
+});
+$('clearCaches').addEventListener('click', async () => {
+  await send('clearCaches');
+  await refreshCaches();
 });
 $('resetAll').addEventListener('click', async () => {
   if (!confirm('Delete all GoalGuard settings, rules and statistics?')) return;

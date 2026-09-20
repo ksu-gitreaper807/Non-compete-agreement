@@ -9,7 +9,8 @@ import { DEFAULT_LIMITS, FRICTION_STATE } from '../storage/schema.js';
 import { RegexClassifier } from '../classifier/regexClassifier.js';
 import { EmbeddingClassifier } from '../classifier/embeddingClassifier.js';
 import { generateAnchors } from '../classifier/anchors.js';
-import { ModelManager, createExtensionLoader } from '../model/modelManager.js';
+import { ModelManager, createExtensionLoader, MODEL_VERSION } from '../model/modelManager.js';
+import { PersistentCache, float32Codec } from '../storage/cacheStore.js';
 import { FrictionManager } from '../blocking/frictionManager.js';
 import { SessionTracker } from './sessionTracker.js';
 import { Controller } from './controller.js';
@@ -22,7 +23,7 @@ import { extractDomain } from '../utils/text.js';
 const browserApi = globalThis.browser ?? globalThis.chrome;
 const BLOCKED_BASE_URL = browserApi.runtime.getURL(BLOCKED_PAGE_PATH);
 const ALARM_TICK = 'goalguard-tick';
-const EMBEDDING_CACHE_KEY = 'embeddingCache';
+const DEBUG_CACHE = false; // flip to see [CACHE] HIT/MISS/expired/evicted lines in the background console
 
 let bootPromise = null;
 let app = null;
@@ -46,13 +47,20 @@ async function boot() {
     onEvent: (event) => sessions.recordEvent(event).catch(() => {}),
   });
 
-  const initialCache = await storage.getValue(EMBEDDING_CACHE_KEY, []);
+  const cacheLog = DEBUG_CACHE || globalThis.GOALGUARD_DEBUG_CACHE ? (line) => console.debug(line) : null;
+  const caches = {
+    classification: new PersistentCache('classification', { log: cacheLog }),
+    embedding: new PersistentCache('embedding', { log: cacheLog, ...float32Codec }),
+    // Reserved for a future DuckDuckGo/LLM layer; short TTL, see cacheStore.js.
+    retrieval: new PersistentCache('retrieval', { log: cacheLog }),
+  };
+  await storage.setValue('embeddingCache', undefined).catch(() => {}); // drop pre-cache-layer blob
+
   const modelManager = new ModelManager({
     // Tests may inject a Node-compatible loader; the extension always uses the bundled files.
     loader: globalThis.GOALGUARD_MODEL_LOADER ?? createExtensionLoader(browserApi.runtime),
-    cacheSize: DEFAULT_LIMITS.embeddingCacheEntries,
-    initialCache: Array.isArray(initialCache) ? initialCache : [],
-    persistCache: (entries) => storage.setValue(EMBEDDING_CACHE_KEY, entries),
+    cache: caches.embedding,
+    modelVersion: MODEL_VERSION,
   });
 
   const classifiers = [
@@ -68,7 +76,8 @@ async function boot() {
     classifiers,
     friction,
     sessions,
-    classificationCacheSize: DEFAULT_LIMITS.classificationCacheEntries,
+    classificationCache: caches.classification,
+    modelVersion: () => MODEL_VERSION,
     loadConfig: async () => {
       const [settings, rules, anchors] = await Promise.all([storage.getSettings(), storage.getRules(), storage.getAnchors()]);
       return { settings, rules, anchors: await ensureAnchors(settings, anchors) };
@@ -96,7 +105,7 @@ async function boot() {
 
   browserApi.alarms.create(ALARM_TICK, { periodInMinutes: 1 });
 
-  app = { sessions, friction, modelManager, controller, tabMonitor };
+  app = { sessions, friction, modelManager, controller, tabMonitor, caches };
   return app;
 }
 
@@ -123,8 +132,9 @@ async function ensureAnchors(settings, anchors) {
 
 browserApi.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_TICK) return;
-  const { sessions, friction, controller, tabMonitor } = await ensureBooted();
+  const { sessions, friction, controller, tabMonitor, caches } = await ensureBooted();
   await sessions.flush();
+  for (const cache of Object.values(caches)) cache.flush().catch(() => {});
   const before = new Set((await friction.listGrants()).map((g) => g.domain));
   await friction.ensureLoaded();
   friction.pruneExpired();
@@ -241,6 +251,17 @@ const router = createMessageRouter({
     return { ...(await sessions.getSummary()), grants: await friction.listGrants() };
   },
 
+  async getCacheStats() {
+    const { caches } = await ensureBooted();
+    return Object.fromEntries(Object.entries(caches).map(([k, c]) => [k, c.getStats()]));
+  },
+
+  async clearCaches() {
+    const { caches, controller } = await ensureBooted();
+    await Promise.all(Object.values(caches).map((c) => c.clear()));
+    controller.invalidateConfig();
+  },
+
   async revokeGrant({ domain }) {
     const { friction, controller, tabMonitor } = await ensureBooted();
     await friction.revokeGrant(domain);
@@ -249,6 +270,7 @@ const router = createMessageRouter({
   },
 
   async resetAll() {
+    if (app) for (const c of Object.values(app.caches)) { c.map.clear(); c.inFlight.clear(); c.dirty = false; }
     await storage.resetAll();
     app?.controller.invalidateConfig();
     if (app) {

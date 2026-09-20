@@ -129,6 +129,13 @@
       <button id="warmUp" type="button">Load model now</button>
     </section>
 
+    <section>
+      <h2>Caches</h2>
+      <p class="help">Local caches of final decisions, title embeddings and (future) retrieval results. Entries expire and are bounded; keys include the model version and your current goal/thresholds/rules, so changing settings never reuses stale decisions.</p>
+      <pre id="cacheStats">—</pre>
+      <button id="clearCaches" type="button">Clear caches</button>
+    </section>
+
     <section class="danger">
       <h2>Reset</h2>
       <button id="resetAll" type="button">Delete all GoalGuard data</button>

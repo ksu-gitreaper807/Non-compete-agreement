@@ -15,7 +15,11 @@ export class TabMonitor {
 
   start() {
     const { tabs, windows, idle } = this.browser;
-    tabs.onActivated.addListener(({ tabId }) => this.schedule(tabId));
+    tabs.onActivated.addListener(({ tabId }) => {
+      // Reset any running countdown on the tab we just left, then evaluate the new one.
+      this.controller.onActiveTabChanged(tabId).catch(() => {});
+      this.schedule(tabId);
+    });
     tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       if (!tab.active) return;
       if ('url' in changeInfo || 'title' in changeInfo || changeInfo.status === 'complete') this.schedule(tabId);
@@ -28,6 +32,7 @@ export class TabMonitor {
     windows.onFocusChanged.addListener((windowId) => {
       if (windowId === windows.WINDOW_ID_NONE) {
         this.controller.deps.sessions.stop().catch(() => {});
+        this.controller.onFocusLost().catch(() => {});
         return;
       }
       this.lastFocusedWindowId = windowId;
@@ -76,7 +81,10 @@ export class TabMonitor {
 
   async refreshActive() {
     const [tab] = await this.browser.tabs.query({ active: true, lastFocusedWindow: true });
-    if (tab) await this.evaluate(tab.id);
+    if (tab) {
+      await this.controller.onActiveTabChanged(tab.id);
+      await this.evaluate(tab.id);
+    }
   }
 
   /** Re-run the pipeline for every tab currently on `domain` (used when grants expire). */

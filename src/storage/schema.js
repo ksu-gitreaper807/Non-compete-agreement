@@ -124,6 +124,7 @@ export function createDefaultState() {
  * @property {number} frictionTriggered
  * @property {number} frictionCompleted
  * @property {number} frictionAbandoned
+ * @property {number} frictionReset      running countdowns invalidated by tab switch / navigation
  * @property {number} overrides
  */
 export function createDayStats() {
@@ -136,6 +137,7 @@ export function createDayStats() {
     frictionTriggered: 0,
     frictionCompleted: 0,
     frictionAbandoned: 0,
+    frictionReset: 0,
     overrides: 0,
   };
 }

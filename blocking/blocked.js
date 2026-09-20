@@ -14,6 +14,7 @@ const el = Object.fromEntries(
 );
 
 let unlockAt = null;
+let generation = null;
 let ticking = null;
 let syncTimer = null;
 let continuing = false;
@@ -59,15 +60,28 @@ async function sync() {
     case 'TEMPORARILY_ALLOWED':
       return proceed();
     case 'COUNTING_DOWN':
+      if (generation !== null && state.generation !== generation) {
+        el.error.textContent = 'Timer restarted because you switched away.';
+        el.error.hidden = false;
+      }
       unlockAt = state.unlockAt;
+      generation = state.generation;
       startTicking();
       break;
     case 'UNLOCKED':
       unlockAt = state.unlockAt ?? Date.now();
+      generation = state.generation;
       startTicking();
       break;
     default:
-      el.hint.textContent = 'Waiting for the extension…';
+      // BLOCKED while inactive: the timer only runs while this tab is in front.
+      if (ticking) clearInterval(ticking);
+      ticking = null;
+      unlockAt = null;
+      el.continue.disabled = true;
+      el.count.textContent = '--';
+      el.count.classList.remove('done');
+      el.hint.textContent = state.inactive ? 'Timer reset — it restarts when you come back to this tab.' : 'Waiting for the extension…';
   }
   const minutes = state.settings?.overrideMinutes;
   if (minutes) el.fine.textContent = `Continuing grants ${formatMinutes(minutes)} of access to ${params.domain}. Time spent still counts as distraction time.`;
@@ -104,8 +118,9 @@ async function onContinue() {
   continuing = true;
   el.continue.disabled = true;
   el.hint.textContent = 'Checking…';
+  el.error.hidden = true;
   try {
-    const result = await send('continueFromFriction', { domain: params.domain, url: params.url, tabId: params.tabId });
+    const result = await send('continueFromFriction', { domain: params.domain, url: params.url, tabId: params.tabId, generation });
     if (result?.ok) {
       el.hint.textContent = 'Access granted. Opening…';
       // Background navigates the tab; fall back to a direct navigation if it did not.
@@ -118,6 +133,7 @@ async function onContinue() {
     el.error.textContent = result?.reason || result?.error || 'Not yet.';
     el.error.hidden = false;
     continuing = false;
+    generation = null;
     await sync();
   } catch (e) {
     continuing = false;
@@ -133,7 +149,7 @@ function proceed() {
 
 async function onBack() {
   try {
-    await send('leaveFriction', { domain: params.domain, tabId: params.tabId, closeTab: history.length <= 1 });
+    await send('leaveFriction', { tabId: params.tabId, closeTab: history.length <= 1 });
   } catch {
     /* fall through to navigation */
   }
@@ -153,8 +169,15 @@ function formatMinutes(m) {
 
 el.continue.addEventListener('click', onContinue);
 el.back.addEventListener('click', onBack);
+// Switching away resets the timer in the background; re-sync on return so the UI shows the
+// fresh full countdown (and stops ticking while hidden).
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) sync();
+  if (document.hidden) {
+    if (ticking) clearInterval(ticking);
+    ticking = null;
+  } else {
+    setTimeout(sync, 50);
+  }
 });
 
 renderStatic();

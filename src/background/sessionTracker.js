@@ -150,6 +150,7 @@ export class SessionTracker {
       if (event === 'frictionTriggered') day.frictionTriggered++;
       else if (event === 'frictionCompleted') day.frictionCompleted++;
       else if (event === 'frictionAbandoned') day.frictionAbandoned++;
+      else if (event === 'frictionReset') day.frictionReset++;
       else if (event === 'overrideGranted') day.overrides++;
       await this.deps.saveStats(this.stats);
     });

@@ -59,7 +59,7 @@ test('irrelevant page redirects to friction page and starts a countdown', async 
   assert.equal(out.frictionState, 'COUNTING_DOWN');
   assert.equal(navigations.length, 1);
   assert.match(navigations[0][1], /blocked\.html/);
-  assert.equal((await friction.getState('pcmag.com')).state, 'COUNTING_DOWN');
+  assert.equal((await friction.getState({ tabId: 2, domain: 'pcmag.com' })).state, 'COUNTING_DOWN');
 });
 
 test('after Continue the page is allowed until the grant expires', async () => {
@@ -138,4 +138,67 @@ test('unconfident results are passed to later classifiers as context.previous', 
   const without = new ClassifierPipeline([new Tentative()]);
   const r2 = await without.classify({ text: 'x' });
   assert.equal(r2.classification, 'questionable');
+});
+
+
+test('switching tabs during a countdown resets it; return gives a full timer', async () => {
+  const semantic = new StubSemantic({ 'Best Gaming PCs of 2026': 'irrelevant' });
+  const { controller, friction, advance } = make({ semantic, settings: { frictionSeconds: 10 } });
+  const tab = { id: 20, url: 'https://pcmag.com/gaming', title: 'Best Gaming PCs of 2026' };
+  await controller.onActiveTabChanged(20);
+  await controller.handleActiveTab(tab);
+  advance(6_000);
+  assert.equal((await friction.getState({ tabId: 20, domain: 'pcmag.com' })).remainingMs, 4_000);
+  await controller.onActiveTabChanged(21); // user switches away
+  assert.equal((await friction.getState({ tabId: 20, domain: 'pcmag.com' })).state, 'BLOCKED');
+  // While tab 20 is not active, its friction page cannot restart the timer.
+  const bg = await controller.getFrictionView({ domain: 'pcmag.com', url: tab.url, classification: 'irrelevant', decision: 'block', tabId: 20 });
+  assert.equal(bg.state, 'BLOCKED');
+  assert.equal(bg.inactive, true);
+  await controller.onActiveTabChanged(20); // user returns
+  const view = await controller.getFrictionView({ domain: 'pcmag.com', url: tab.url, classification: 'irrelevant', decision: 'block', tabId: 20 });
+  assert.equal(view.state, 'COUNTING_DOWN');
+  assert.equal(view.remainingMs, 10_000);
+});
+
+test('classification cache hit still triggers friction', async () => {
+  const semantic = new StubSemantic({ 'Best Gaming PCs of 2026': 'irrelevant' });
+  const { controller, navigations } = make({ semantic });
+  await controller.handleActiveTab({ id: 30, url: 'https://pcmag.com/a', title: 'Best Gaming PCs of 2026' });
+  const second = await controller.handleActiveTab({ id: 31, url: 'https://pcmag.com/b', title: 'Best Gaming PCs of 2026' });
+  assert.equal(second.cached, true);
+  assert.equal(second.frictionState, 'COUNTING_DOWN');
+  assert.equal(navigations.length, 2);
+});
+
+test('classification cache hit on a relevant page causes no friction', async () => {
+  const { controller, navigations } = make();
+  await controller.handleActiveTab({ id: 40, url: 'https://a.com/1', title: 'Operating Systems lecture' });
+  const second = await controller.handleActiveTab({ id: 41, url: 'https://b.com/2', title: 'Operating Systems lecture' });
+  assert.equal(second.decision, 'allow');
+  assert.equal(navigations.length, 0);
+});
+
+test('concurrent identical classifications run the pipeline once', async () => {
+  let calls = 0;
+  class Slow extends Classifier { get name() { return 's'; } async classify() { calls++; await new Promise((r) => setTimeout(r, 20)); return makeResult('irrelevant', 'embedding', 'x', { score: 0.1 }); } }
+  const { controller } = make({ semantic: new Slow() });
+  const [a, b] = await Promise.all([
+    controller.classifyPage({ url: 'https://a.com/1', title: 'Foo bar' }),
+    controller.classifyPage({ url: 'https://a.com/2', title: 'Foo  bar ' }),
+  ]);
+  assert.equal(calls, 1);
+  assert.equal(a.classification, b.classification);
+  assert.equal(b.deduplicated, true);
+});
+
+test('changing settings invalidates cached decisions via the key fingerprint', async () => {
+  let calls = 0;
+  class Counting extends Classifier { get name() { return 'c'; } async classify() { calls++; return makeResult('irrelevant', 'embedding', 'x', { score: 0.1 }); } }
+  const ctx = make({ semantic: new Counting() });
+  await ctx.controller.classifyPage({ url: 'https://a.com/1', title: 'Foo bar' });
+  ctx.controller.deps.loadConfig = async () => ({ settings: { ...DEFAULT_SETTINGS, weeklyGoal: 'Learn Rust' }, rules: { allow: [], block: [] }, anchors: { ...DEFAULT_ANCHORS } });
+  ctx.controller.invalidateConfig();
+  await ctx.controller.classifyPage({ url: 'https://a.com/1', title: 'Foo bar' });
+  assert.equal(calls, 2);
 });

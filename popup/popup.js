@@ -77,7 +77,7 @@ function renderStats(state) {
   $('progressText').textContent = target > 0
     ? `${formatDuration(week.relevantMs)} of ${formatDuration(target)} productive this week (${pct}%)`
     : `${formatDuration(week.relevantMs)} productive this week`;
-  $('frictionText').textContent = `This week: ${week.frictionTriggered} pauses · ${week.overrides} overrides · ${week.frictionAbandoned} walked away · ${formatDuration(week.overrideMs)} after overrides`;
+  $('frictionText').textContent = `This week: ${week.frictionTriggered} pauses · ${week.overrides} overrides · ${week.frictionAbandoned} walked away · ${week.frictionReset ?? 0} resets · ${formatDuration(week.overrideMs)} after overrides`;
 }
 
 function renderModel(model) {
