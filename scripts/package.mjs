@@ -1,27 +1,51 @@
 #!/usr/bin/env node
 /**
- * Builds dist/goalguard-<version>.zip containing only the files Firefox needs.
+ * Builds the distributable GoalGuard archives in dist/:
+ *
+ *   goalguard-<version>.zip   — upload this to addons.mozilla.org for signing
+ *                                (also loadable via "Load Temporary Add-on…").
+ *   goalguard-<version>.xpi   — byte-identical to the .zip. An .xpi IS a zip file
+ *                                with a different extension; it is what Firefox
+ *                                installs. Release-channel Firefox only accepts
+ *                                .xpi files carrying a Mozilla signature, so the
+ *                                file built here must go through signing first
+ *                                (see docs/SIGNING.md) before it installs
+ *                                permanently.
+ *
  * Pure Node (no `zip` binary required): writes a standard ZIP with deflate entries.
+ * Runs scripts/check-manifest.mjs first and aborts if the tree is invalid.
+ *
+ * Usage: node scripts/package.mjs [--format=zip|xpi|both] [--out-dir=dist]
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { checkManifest } from './check-manifest.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-const include = ['manifest.json', 'src', 'popup', 'options', 'blocking', 'ledger', 'icons', 'vendor', 'models', 'LICENSE'];
-const exclude = (rel) => rel.endsWith('.map') || path.basename(rel) === '.DS_Store' || rel === 'models/README.md';
+/**
+ * Root entries shipped inside the extension. Everything else (tests, scripts,
+ * docs, node_modules, …) is dev-only and stays out of the signed artifact.
+ * web-ext-config.mjs imports this list so `web-ext sign` uploads exactly the
+ * same file set — keep the packaging logic here, in one place.
+ */
+export const INCLUDE = ['manifest.json', 'src', 'popup', 'options', 'blocking', 'ledger', 'icons', 'vendor', 'models', 'LICENSE'];
+export const exclude = (rel) => rel.endsWith('.map') || path.basename(rel) === '.DS_Store' || rel === 'models/README.md';
 
-function walk(rel, out) {
-  const abs = path.join(root, rel);
-  if (!fs.existsSync(abs)) return;
-  const stat = fs.statSync(abs);
-  if (stat.isDirectory()) {
-    for (const name of fs.readdirSync(abs).sort()) walk(path.posix.join(rel, name), out);
-  } else if (!exclude(rel)) {
-    out.push(rel);
-  }
+export function collectFiles(root, include = INCLUDE) {
+  const out = [];
+  const walk = (rel) => {
+    const abs = path.join(root, rel);
+    if (!fs.existsSync(abs)) return;
+    const stat = fs.statSync(abs);
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(abs).sort()) walk(path.posix.join(rel, name));
+    } else if (!exclude(rel)) {
+      out.push(rel);
+    }
+  };
+  for (const entry of include) walk(entry);
+  return out;
 }
 
 // ---- minimal ZIP writer (PKZIP spec: local headers + central directory) ----------------------
@@ -43,7 +67,7 @@ function dosDateTime(d) {
 function u16(n) { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; }
 function u32(n) { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0); return b; }
 
-function buildZip(files) {
+export function buildZip(root, files) {
   const parts = [];
   const central = [];
   let offset = 0;
@@ -76,9 +100,47 @@ function buildZip(files) {
   return Buffer.concat([...parts, centralBuf, end]);
 }
 
-const files = [];
-for (const entry of include) walk(entry, files);
-fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
-const out = path.join(root, 'dist', `goalguard-${manifest.version}.zip`);
-fs.writeFileSync(out, buildZip(files));
-console.log(`Wrote ${path.relative(root, out)} (${files.length} files, ${(fs.statSync(out).size / 1048576).toFixed(1)} MB)`);
+function parseArgs(argv) {
+  const opts = { format: 'both', outDir: 'dist' };
+  for (const arg of argv) {
+    if (arg === '--help' || arg === '-h') {
+      console.log('Usage: node scripts/package.mjs [--format=zip|xpi|both] [--out-dir=dist]');
+      process.exit(0);
+    }
+    const m = arg.match(/^--(format|out-dir)=(.+)$/);
+    if (!m) { console.error(`Unknown argument: ${arg}`); process.exit(1); }
+    if (m[1] === 'format' && !['zip', 'xpi', 'both'].includes(m[2])) {
+      console.error(`--format must be zip, xpi or both (got "${m[2]}")`);
+      process.exit(1);
+    }
+    opts[m[1] === 'out-dir' ? 'outDir' : 'format'] = m[2];
+  }
+  return opts;
+}
+
+function main() {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const { format, outDir } = parseArgs(process.argv.slice(2));
+
+  const { manifest, problems } = checkManifest(root);
+  if (problems.length) {
+    console.error(`Refusing to package: ${problems.length} problem(s):\n${problems.join('\n')}`);
+    process.exit(1);
+  }
+
+  const files = collectFiles(root);
+  const archive = buildZip(root, files);
+  const exts = format === 'both' ? ['zip', 'xpi'] : [format];
+  fs.mkdirSync(path.join(root, outDir), { recursive: true });
+  for (const ext of exts) {
+    const out = path.join(root, outDir, `goalguard-${manifest.version}.${ext}`);
+    fs.writeFileSync(out, archive);
+    console.log(`Wrote ${path.relative(root, out)} (${files.length} files, ${(fs.statSync(out).size / 1048576).toFixed(1)} MB)`);
+  }
+  if (format !== 'zip') {
+    console.log('Note: the .xpi is not yet installable on release Firefox — it needs a Mozilla');
+    console.log('signature first. See docs/SIGNING.md (one command: npm run sign).');
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();
