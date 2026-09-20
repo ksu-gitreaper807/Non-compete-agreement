@@ -427,3 +427,32 @@ test('intent ledger: capture at friction, persist, no bypass when opened, timer 
   assert.equal((await h.sendMessage('ledgerList', { status: ['pending', 'in_progress'] })).counts.open, 0);
   await h.browser.tabs.remove(opened.tabId);
 });
+
+test('popup: opening it neither runs the pipeline for cached pages nor touches a running countdown', async () => {
+  await h.sendMessage('saveSettings', { frictionSeconds: 5 });
+  await sleep(50);
+  const url = 'https://www.twitch.tv/directory/gaming';
+  const id = await h.openTab({ url, title: 'Live gaming streams' });
+  await settle(800);
+  const params = Object.fromEntries(new URL(h.navigations.at(-1).url).searchParams);
+  const v1 = await h.sendMessage('getFrictionState', { ...params, tabId: id });
+  assert.equal(v1.state, 'COUNTING_DOWN');
+  // Popup opens: state read + ledger read only.
+  const popup = await h.sendMessage('getPopupState');
+  const ledger = await h.sendMessage('ledgerList', { status: ['pending', 'in_progress'] });
+  assert.ok(Array.isArray(ledger.entries));
+  assert.equal(popup.tab.domain, 'twitch.tv');
+  const v2 = await h.sendMessage('getFrictionState', { ...params, tabId: id });
+  assert.equal(v2.state, 'COUNTING_DOWN');
+  assert.equal(v2.unlockAt, v1.unlockAt, 'popup did not reset or restart the timer');
+  assert.equal(v2.generation, v1.generation);
+  // Quick-add from the popup uses the tab context and the same ledger API.
+  const { entry } = await h.sendMessage('ledgerCreate', { domain: popup.tab.domain, url: popup.tab.url, title: popup.tab.title, intent: 'Check if the OS talk VOD is up', source: 'popup' });
+  assert.equal(entry.domain, 'twitch.tv');
+  assert.equal(entry.url, url);
+  assert.equal(entry.source, 'popup');
+  const v3 = await h.sendMessage('getFrictionState', { ...params, tabId: id });
+  assert.equal(v3.unlockAt, v1.unlockAt);
+  await h.sendMessage('ledgerDelete', { id: entry.id });
+  await h.browser.tabs.remove(id);
+});

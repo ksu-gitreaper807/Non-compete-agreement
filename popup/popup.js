@@ -1,4 +1,5 @@
 const api = globalThis.browser ?? globalThis.chrome;
+import { domainMatches } from '../src/utils/text.js';
 const $ = (id) => document.getElementById(id);
 
 function send(type, payload) {
@@ -44,7 +45,7 @@ function renderCurrent(state) {
   const { current, tab, settings, analyzing } = state;
   lastTabUrl = tab?.url ?? null;
   lastTabTitle = tab?.title ?? '';
-  const domainNow = tab?.domain ?? null;
+  const domainNow = tab?.domain || null;
   if (domainNow !== currentDomain || !ledgerRendered) {
     currentDomain = domainNow;
     ledgerRendered = true;
@@ -250,19 +251,19 @@ $('feedbackFix').addEventListener('click', (e) => {
   const label = e.target.dataset?.label;
   if (label) sendFeedback(label);
 });
-$('openLedger').addEventListener('click', (e) => {
-  e.preventDefault();
-  send('openLedgerPage').catch(() => {});
-  window.close();
-});
-// ---- Intent ledger block -----------------------------------------------------------------------
-// Pending tasks, the current site's first. Complete = explicit click; Open = a normal tab that
-// goes through classification/friction like any other.
-const LEDGER_MAX_ROWS = 5;
+// ---- Your tasks (Intent Ledger) ---------------------------------------------------------------
+// Popup is a view/controller over the background LedgerManager — a storage read, no models, no
+// network, and it never touches friction state. Active-domain tasks first (existing
+// domainMatches rules: www./m. subdomains fold into the registrable host).
+const LEDGER_MAX_ROWS = 4;
 let currentDomain = null;
 let lastTabUrl = null;
 let lastTabTitle = '';
 let ledgerRendered = false;
+
+function sameSite(a, b) {
+  return domainMatches(a, b) || domainMatches(b, a);
+}
 
 async function renderLedger() {
   let r;
@@ -273,46 +274,68 @@ async function renderLedger() {
   }
   if (!r || r.error) return;
   const entries = r.entries ?? [];
-  const here = currentDomain ? entries.filter((e) => e.domain === currentDomain) : [];
-  const rest = entries.filter((e) => !here.includes(e));
-  const ordered = [...here, ...rest.sort((a, b) => a.createdAt - b.createdAt)];
+  const here = currentDomain ? entries.filter((e) => sameSite(e.domain, currentDomain)).sort((a, b) => a.createdAt - b.createdAt) : [];
+  const rest = entries.filter((e) => !here.includes(e)).sort((a, b) => a.createdAt - b.createdAt);
+  const ordered = [...here, ...rest];
   const shown = ordered.slice(0, LEDGER_MAX_ROWS);
-  $('ledgerSummary').textContent = entries.length ? `· ${entries.length} pending` : '';
+  const hiddenCount = ordered.length - shown.length;
+
+  $('ledgerSummary').textContent = entries.length ? `· ${entries.length}` : '';
   $('ledgerEmpty').hidden = entries.length > 0;
-  $('ledgerMore').hidden = ordered.length <= LEDGER_MAX_ROWS;
-  if (ordered.length > LEDGER_MAX_ROWS) $('ledgerMore').textContent = `+${ordered.length - LEDGER_MAX_ROWS} more in the full ledger`;
-  $('ledgerQuick').hidden = !currentDomain;
-  if (currentDomain) $('ledgerQuickIntent').placeholder = `Task for ${currentDomain}…`;
+  $('ledgerGroup').hidden = here.length === 0;
+  if (here.length) $('ledgerGroup').textContent = currentDomain;
+  $('ledgerMore').hidden = hiddenCount <= 0;
+  if (hiddenCount > 0) {
+    const otherHidden = Math.min(hiddenCount, rest.length);
+    $('ledgerMore').textContent = here.length && otherHidden === hiddenCount ? `${otherHidden} other task${otherHidden === 1 ? '' : 's'}` : `+ ${hiddenCount} more`;
+  }
+  $('ledgerAddBtn').disabled = !currentDomain;
+  $('ledgerAddBtn').title = currentDomain ? `Add a task for ${currentDomain}` : 'Open a website first';
 
   const list = $('ledgerList');
   list.innerHTML = '';
   for (const e of shown) {
     const li = document.createElement('li');
-    if (e.domain === currentDomain) li.classList.add('here');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.title = 'Mark complete';
-    cb.addEventListener('change', () => send('ledgerComplete', { id: e.id }).then(renderLedger).catch(() => {}));
-    const txt = document.createElement('span');
+    cb.addEventListener('change', async () => {
+      li.classList.add('done'); // immediate feedback; storage change re-renders the list
+      try { await send('ledgerComplete', { id: e.id }); } catch { li.classList.remove('done'); cb.checked = false; return; }
+      setTimeout(renderLedger, 250);
+    });
+    const txt = document.createElement('button');
+    txt.type = 'button';
     txt.className = 'txt';
+    txt.title = 'Open in a new tab — normal classification and friction apply';
     const intent = document.createElement('span');
     intent.className = 'intent';
     intent.textContent = e.intent;
-    const dom = document.createElement('span');
-    dom.className = 'dom';
-    dom.textContent = e.domain === currentDomain ? `${e.domain} · this site` : e.domain;
-    txt.append(intent, dom);
-    const open = document.createElement('button');
-    open.type = 'button';
-    open.className = 'link';
-    open.textContent = 'Open';
-    open.title = 'Opens in a new tab (normal classification applies)';
-    open.addEventListener('click', () => send('ledgerOpen', { id: e.id }).then(() => window.close()).catch(() => {}));
-    li.append(cb, txt, open);
+    txt.append(intent);
+    if (!currentDomain || !sameSite(e.domain, currentDomain) || here.length === 0) {
+      const dom = document.createElement('span');
+      dom.className = 'dom';
+      dom.textContent = e.domain;
+      txt.append(dom);
+    }
+    txt.addEventListener('click', () => send('ledgerOpen', { id: e.id }).then(() => window.close()).catch(() => {}));
+    li.append(cb, txt);
     list.append(li);
   }
 }
 
+function showQuickAdd(show) {
+  $('ledgerQuick').hidden = !show;
+  $('ledgerActions').hidden = show;
+  if (show) {
+    $('ledgerQuickSite').textContent = `Website: ${currentDomain} (current tab)`;
+    $('ledgerQuickIntent').focus();
+  }
+}
+
+$('ledgerAddBtn').addEventListener('click', () => currentDomain && showQuickAdd(true));
+$('ledgerQuickCancel').addEventListener('click', () => showQuickAdd(false));
+$('ledgerViewAll').addEventListener('click', () => { send('openLedgerPage').catch(() => {}); window.close(); });
 $('ledgerQuick').addEventListener('submit', async (e) => {
   e.preventDefault();
   const intent = $('ledgerQuickIntent').value.trim();
@@ -320,12 +343,19 @@ $('ledgerQuick').addEventListener('submit', async (e) => {
   try {
     const { duplicate } = (await send('ledgerFindDuplicate', { domain: currentDomain, intent })) ?? {};
     if (duplicate && !confirm(`You already have "${duplicate.intent}" for ${currentDomain}. Create another?`)) return;
+    // Domain, URL and title come from the active tab; the user only types the intent.
     await send('ledgerCreate', { domain: currentDomain, url: lastTabUrl, title: lastTabTitle, intent, source: 'popup' });
     $('ledgerQuickIntent').value = '';
+    showQuickAdd(false);
     renderLedger();
   } catch {
     /* ignore */
   }
+});
+
+// Reflect changes made on the pause page or the ledger page while the popup is open.
+api.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'local' && changes.ledger) renderLedger();
 });
 
 $('openOptions').addEventListener('click', (e) => {

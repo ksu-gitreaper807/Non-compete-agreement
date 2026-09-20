@@ -52,11 +52,16 @@ h2 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing
 .analyzing { color: var(--warn); }
 
 .h2-note { text-transform: none; letter-spacing: 0; font-weight: 400; }
-.ledger-list { list-style: none; margin: 0 0 6px; padding: 0; }
-.ledger-list li { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; }
-.ledger-list input { margin: 3px 0 0; }
-.ledger-list .txt { flex: 1; min-width: 0; }
-.ledger-list .intent { display: block; overflow-wrap: anywhere; }
-.ledger-list .dom { color: var(--muted); font-size: 11px; }
-.ledger-list li.here .dom { color: var(--ok); }
-.ledger-list .link { padding: 0 2px; }
+.task-group { margin: 0 0 2px; font-size: 11px; font-weight: 600; color: var(--ok); }
+.ledger-list { list-style: none; margin: 0 0 4px; padding: 0; }
+.ledger-list li { display: flex; align-items: flex-start; gap: 6px; padding: 2px 0; }
+.ledger-list input { margin: 3px 0 0; flex: none; }
+.ledger-list .txt { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.ledger-list .txt:hover .intent { text-decoration: underline; }
+.ledger-list .intent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-list .dom { display: block; color: var(--muted); font-size: 11px; }
+.ledger-list li.done .intent { text-decoration: line-through; color: var(--muted); }
+.task-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
+.task-add { display: grid; gap: 4px; margin-top: 4px; }
+.task-add input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+.task-add button[type=submit] { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }

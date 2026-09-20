@@ -23,7 +23,7 @@ import { Controller } from './controller.js';
 import { TabMonitor } from './tabMonitor.js';
 import { createMessageRouter } from './messageRouter.js';
 import { LedgerManager } from '../ledger/ledgerManager.js';
-import { buildBlockedPageUrl, isBlockedPageUrl, BLOCKED_PAGE_PATH } from '../blocking/blocker.js';
+import { buildBlockedPageUrl, isBlockedPageUrl, BLOCKED_PAGE_PATH, parseBlockedPageParams } from '../blocking/blocker.js';
 import { validatePattern } from '../utils/regex.js';
 import { extractDomain, isSupportedUrl } from '../utils/text.js';
 
@@ -213,6 +213,19 @@ browserApi.alarms.onAlarm.addListener(async (alarm) => {
   for (const grant of await friction.overdueGrants()) await expireGrant(grant.key);
 });
 
+/**
+ * Tab context for the popup. When the active tab is our own pause page, surface the site it
+ * stands in for (from the page's own URL params) so ledger grouping and quick-add refer to the
+ * real website, not moz-extension://.
+ */
+function popupTabContext(tab) {
+  if (isBlockedPageUrl(tab.url, BLOCKED_BASE_URL)) {
+    const p = parseBlockedPageParams(new URL(tab.url).search);
+    return { title: p.title || tab.title, domain: p.domain || '', url: p.url || null, onFrictionPage: true };
+  }
+  return { title: tab.title, domain: extractDomain(tab.url), url: isSupportedUrl(tab.url) ? tab.url : null, onFrictionPage: false };
+}
+
 /** Removes the grant and intervenes on the tab(s) it covered, if they are still on the site. */
 async function expireGrant(key) {
   const { friction, controller, tabMonitor } = await ensureBooted();
@@ -262,7 +275,7 @@ const router = createMessageRouter({
       settings,
       current: current && !current.ignored ? sanitizeOutcome(current, settings.debugMode) : null,
       analyzing: tab ? controller.getAnalyzing(tab.id) : null,
-      tab: tab ? { title: tab.title, domain: extractDomain(tab.url), url: isSupportedUrl(tab.url) ? tab.url : null } : null,
+      tab: tab ? popupTabContext(tab) : null,
       summary,
       model: modelManager.getStatus(),
       ai: aiStatus({ llmManager, searchManager, settings, searchPermission: await hasOriginPermission(DDG_ORIGIN_PATTERN) }),

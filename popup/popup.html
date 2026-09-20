@@ -46,17 +46,6 @@
     <pre class="debug" id="debug" hidden></pre>
   </section>
 
-  <section class="block" id="ledgerBlock">
-    <h2>Intent ledger <span id="ledgerSummary" class="h2-note"></span></h2>
-    <ul class="ledger-list" id="ledgerList"></ul>
-    <p class="meta" id="ledgerEmpty" hidden>No pending tasks. Write one on the pause page or below.</p>
-    <p class="meta" id="ledgerMore" hidden></p>
-    <form id="ledgerQuick" class="goal-form" autocomplete="off" hidden>
-      <input id="ledgerQuickIntent" type="text" maxlength="200" placeholder="Task for this site…" />
-      <button type="submit">Add</button>
-    </form>
-  </section>
-
   <section class="block">
     <h2>Today</h2>
     <table class="stats">
@@ -87,13 +76,33 @@
     </table>
   </section>
 
+  <section class="block tasks" id="ledgerBlock">
+    <h2>Your tasks <span id="ledgerSummary" class="h2-note"></span></h2>
+    <p class="task-group" id="ledgerGroup" hidden></p>
+    <ul class="ledger-list" id="ledgerList"></ul>
+    <p class="meta" id="ledgerEmpty" hidden>No pending tasks.</p>
+    <p class="meta" id="ledgerMore" hidden></p>
+    <form id="ledgerQuick" class="task-add" autocomplete="off" hidden>
+      <label for="ledgerQuickIntent" class="meta">What do you need to do?</label>
+      <input id="ledgerQuickIntent" type="text" maxlength="200" placeholder="e.g. Check issue #142" />
+      <p class="meta" id="ledgerQuickSite"></p>
+      <div class="task-actions">
+        <button type="submit">Save</button>
+        <button type="button" class="link" id="ledgerQuickCancel">Cancel</button>
+      </div>
+    </form>
+    <div class="task-actions" id="ledgerActions">
+      <button type="button" class="link" id="ledgerAddBtn">+ Add task</button>
+      <button type="button" class="link" id="ledgerViewAll">View all</button>
+    </div>
+  </section>
+
   <footer class="bottom">
     <span class="status">
       <span class="model" id="modelStatus">AI classifier: idle</span>
       <span class="model" id="llmStatus"></span>
       <span class="model" id="searchStatus"></span>
     </span>
-    <a href="#" id="openLedger">Ledger</a>
     <a href="#" id="openOptions">Settings</a>
   </footer>
   <script type="module" src="popup.js"></script>
