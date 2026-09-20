@@ -6,7 +6,7 @@
  *  - optional idle unload: the LLM is heavier than BGE, so it is released after `idleUnloadMs`
  *    without a judgment (event-page termination releases it anyway).
  */
-import { loadTransformersJsLLM, LLM_MODEL_VERSION } from './localLLM.js';
+import { loadTransformersJsLLM, loadNliJudge, NLI_MODEL_VERSION } from './localLLM.js';
 import { buildMessages } from './promptBuilder.js';
 import { hashString } from '../utils/text.js';
 
@@ -22,7 +22,7 @@ export class LlmManager {
    * @param {number} [options.timeoutMs]
    * @param {number} [options.idleUnloadMs]  0 disables idle unloading
    */
-  constructor({ loader, modelVersion = LLM_MODEL_VERSION, timeoutMs = 30000, idleUnloadMs = DEFAULT_IDLE_UNLOAD_MS }) {
+  constructor({ loader, modelVersion = NLI_MODEL_VERSION, timeoutMs = 30000, idleUnloadMs = DEFAULT_IDLE_UNLOAD_MS }) {
     this.loader = loader;
     this.modelVersion = modelVersion;
     this.timeoutMs = timeoutMs;
@@ -164,9 +164,11 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
-export function createExtensionLlmLoader(runtime) {
+/** In-extension loaders. `generative` selects the optional Qwen path; default is the NLI judge. */
+export function createExtensionLlmLoader(runtime, { generative = false } = {}) {
+  const load = generative ? loadTransformersJsLLM : loadNliJudge;
   return (onProgress) =>
-    loadTransformersJsLLM({
+    load({
       transformersUrl: runtime.getURL('vendor/transformers.min.js'),
       wasmUrl: runtime.getURL('vendor/ort/'),
       onProgress,

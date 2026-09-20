@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   searchMode: 'ambiguous',    // 'uncertain' = every questionable page | 'ambiguous' = only generic/low-information titles
   searchMaxResults: 5,        // 1..10
   searchCacheHours: 24,       // 1..168
-  llmRuntime: 'transformers', // 'transformers' (in-browser) | 'ollama' | 'llamacpp' (localhost servers)
+  llmRuntime: 'nli',          // 'nli' (in-browser NLI judge, default) | 'transformers' (in-browser generative) | 'ollama' | 'llamacpp'
   llmEndpoint: '',            // localhost URL for ollama/llamacpp; empty = adapter default
   llmModelName: '',           // model tag for ollama/llamacpp; empty = adapter default
   llmMinConfidence: 0.6,      // below this the LLM verdict is downgraded to questionable

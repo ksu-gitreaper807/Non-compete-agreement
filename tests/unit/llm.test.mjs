@@ -161,3 +161,44 @@ test('LlmClassifier: invalid JSON → null (not cached); runtime error → throw
   const broken = new LlmClassifier({ llm: fakeLlm(good, { loadError: 'oom' }).manager });
   await assert.rejects(broken.classify({ ...base, settings: settingsOn }), /oom/);
 });
+
+// ---- NLI judge (default in-browser runtime) ---------------------------------------------------
+
+import { NliJudgeAdapter, runtimeModelVersion, NLI_MODEL_VERSION } from '../../src/llm/localLLM.js';
+
+/** Fake entailment: high when premise mentions "kernel"/"operating", low when it mentions "gossip". */
+const fakeEntail = async (premise) => (/kernel|operating|scheduling/i.test(premise) ? 0.9 : /gossip|celebrity|gaming/i.test(premise) ? 0.05 : 0.5);
+
+test('NliJudgeAdapter maps entailment to strict verdict JSON with grounded evidence', async () => {
+  const judge = new NliJudgeAdapter(fakeEntail);
+  const msgs = (payload) => buildMessages(payload);
+  const rel = parseLlmResponse(await judge.complete(msgs({ goal: 'Study OS', page: { title: 'Linus Torvalds Interview', domain: 'youtube.com' }, webContext: [{ title: 'Kernel dev talk', snippet: 'linux kernel scheduling' }, { title: 'Wiki', snippet: 'operating systems pioneer' }] })));
+  assert.equal(rel.classification, 'relevant');
+  assert.ok(rel.confidence >= 0.5, String(rel.confidence)); // (2·0.9 + 0.5)/3 = 0.77 entailment
+  assert.deepEqual(rel.evidence, ['Kernel dev talk', 'Wiki']);
+
+  const irr = parseLlmResponse(await judge.complete(msgs({ goal: 'Study OS', page: { title: 'Celebrity gossip roundup' } })));
+  assert.equal(irr.classification, 'irrelevant');
+
+  const unsure = parseLlmResponse(await judge.complete(msgs({ goal: 'Study OS', page: { title: 'Episode 42' } })));
+  assert.equal(unsure.classification, 'questionable');
+  assert.deepEqual(unsure.evidence, []);
+  assert.equal(unsure.confidence, 0);
+
+  assert.equal(parseLlmResponse(await judge.complete([{ role: 'system', content: 'x' }, { role: 'user', content: 'not json' }])).classification, 'questionable');
+  assert.equal(judge.modelVersion, NLI_MODEL_VERSION);
+});
+
+test('runtimeModelVersion defaults to the NLI judge', () => {
+  assert.equal(runtimeModelVersion({}), NLI_MODEL_VERSION);
+  assert.equal(runtimeModelVersion({ llmRuntime: 'nli' }), NLI_MODEL_VERSION);
+  assert.match(runtimeModelVersion({ llmRuntime: 'transformers' }), /Qwen/);
+});
+
+test('NLI judge through the classifier: web context outweighs an ambiguous title', async () => {
+  const manager = new LlmManager({ loader: async () => new NliJudgeAdapter(fakeEntail), idleUnloadMs: 0 });
+  const c = new LlmClassifier({ llm: manager, cache: new PersistentCache('llm', { persist: false }) });
+  const r = await c.classify({ text: 'Episode 42', goal: 'Study OS', domain: 'pod.example', previous: { score: 0.5 }, settings: { ...DEFAULT_SETTINGS, llmEnabled: true }, search: { results: [{ title: 'Ep 42: the Linux kernel scheduler', snippet: 'operating systems podcast' }] } });
+  assert.equal(r.classification, 'relevant');
+  assert.equal(r.source, 'llm+search');
+});

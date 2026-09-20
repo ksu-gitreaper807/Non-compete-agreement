@@ -146,8 +146,13 @@ cool-down.
   snippet}}`. Nothing else — no URL, no history, no other tabs.
 * **Prompt** (`SYSTEM_PROMPT`): relevance-to-goal only, use supplied information only, answer
   `questionable` when the context does not establish what the page is about, return only JSON.
-* **Runtime** (`localLLM.js`): `LocalLLM.complete(messages)`; adapters for in-extension
-  Transformers.js (greedy, ≤120 new tokens), Ollama (`/api/chat`, `format: json`) and llama.cpp
+* **Runtime** (`localLLM.js`): `LocalLLM.complete(messages)` → verdict JSON string.
+  *Default `NliJudgeAdapter`* (`Xenova/nli-deberta-v3-xsmall`, int8 ≈70 MB): hypothesis
+  `"This page is about <goal>."`; premises = `title (domain)` and each `title: snippet` context
+  row; `p = contextAvg·2/3 + title·1/3` (title only when no context); `p ≥ 0.7` → relevant,
+  `p ≤ 0.3` → irrelevant, else questionable; `confidence = |p − 0.5|·2`; evidence = the rows
+  that crossed the threshold (so it is grounded by construction). Optional generative adapters:
+  in-extension Transformers.js (Qwen2.5-0.5B, greedy, ≤120 new tokens), Ollama (`/api/chat`, `format: json`) and llama.cpp
   server (`/v1/chat/completions`, `response_format: json_object`). Non-localhost endpoints throw
   at construction. `LlmManager` adds lazy load with progress, 30 s timeout, per-prompt in-flight
   dedupe, 10-minute retry cool-down after a load failure and 10-minute idle unload.

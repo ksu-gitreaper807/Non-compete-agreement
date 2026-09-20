@@ -283,9 +283,13 @@ none` is downgraded to `questionable`. Every result records `source`, `sourceKin
 (`explicit_rule | regex | embedding | local_llm | fallback`), `confidence`, `semanticScore`,
 `evidenceQuality`, `searchUsed` and per-stage `timings`.
 
-Runtimes: in-browser Transformers.js (`onnx-community/Qwen2.5-0.5B-Instruct` q4, ≈400 MB
-downloaded once; Qwen3-0.6B needs Transformers.js v3), or a **localhost** Ollama / llama.cpp
-server (e.g. `qwen3:0.6b`) — adapters refuse any non-local endpoint.
+Runtimes (`llmRuntime`): **`nli` (default)** — `Xenova/nli-deberta-v3-xsmall` (int8, ≈70 MB,
+~22 M params), a natural-language-inference cross-encoder that scores *"This page is about
+<goal>."* against the title and each web-context row; it emits the same strict verdict JSON,
+runs in tens of milliseconds and cannot hallucinate because it generates no text. Alternatives:
+`transformers` (in-browser generative `Qwen2.5-0.5B-Instruct` q4, ≈400 MB, seconds per page) or
+a **localhost** Ollama / llama.cpp server (e.g. `qwen3:0.6b`) — adapters refuse non-local
+endpoints. All in-browser weights are downloaded once from Hugging Face and cached.
 
 **Policy engine** (`policyEngine.js`) maps classification → `allow | warn | block` and picks
 the friction duration. Defaults: relevant→allow, questionable→warn (short friction),
@@ -519,7 +523,8 @@ same dataset, now 153 titles including 20 deliberately generic ones ("Processes"
 offline from `tests/data/search-fixtures.json`; the LLM is by default a deterministic **mock that
 follows the prompt rules** (relevant only when the context shares goal terms, irrelevant on
 distraction terms, otherwise questionable), so the numbers measure the *pipeline*, not a model.
-Pass `--llm ollama --model qwen3:0.6b` with a local server to measure a real one.
+Pass `--llm nli` to measure the real default judge (downloads the model in Node), or
+`--llm ollama --model qwen3:0.6b` with a local server for a generative one.
 
 Result in this sandbox (searchMode=ambiguous, mock LLM):
 
@@ -548,8 +553,9 @@ mock is not a language model and the fixtures were written by the author.
   with offline search fixtures and a rule-following mock LLM (see Benchmark). Real DuckDuckGo
   HTML and real model inference could not be exercised in the development sandbox (no
   network) — the integration tests inject a fake LLM and a fake `fetch`.
-* **LLM cost.** In-browser: ≈400 MB one-time download, ~1 GB RAM while loaded, seconds per
-  judgment (it is unloaded after 10 min idle). DuckDuckGo's HTML markup may change; the parser
+* **Judge cost.** Default NLI judge: ≈70 MB one-time download, ~150 MB RAM, ~20–50 ms per
+  premise. Generative Qwen option: ≈400 MB, ~1 GB RAM, seconds per judgment. Both unload
+  after 10 min idle. The NLI thresholds (0.7 / 0.3 entailment) are heuristics. DuckDuckGo's HTML markup may change; the parser
   then yields no results and the LLM simply runs without context.
 * **Memory.** The resident model costs roughly 150–200 MB while loaded; it is loaded lazily
   and only when a title reaches Layer 2.
@@ -563,8 +569,9 @@ mock is not a language model and the fixtures were written by the author.
 
 ## Using and verifying the AI layers
 
-1. Options → **AI classification** → tick *Enable local LLM*; approve the permission Firefox
-   shows (Hugging Face for the in-browser runtime, or `localhost` for Ollama / llama.cpp).
+1. Options → **AI classification** → tick *Enable local AI judge*; approve the permission
+   Firefox shows (Hugging Face for the in-browser runtimes, or `localhost` for Ollama / llama.cpp).
+   The default runtime is the ≈70 MB NLI judge.
    Optionally tick *Enable semantic web search* and approve `html.duckduckgo.com`.
 2. Click **Download & load LLM now** (one-time, a few minutes) — the status line shows progress.
 3. Type an ambiguous title (e.g. `Building Better Systems`) in *Try a title* and press

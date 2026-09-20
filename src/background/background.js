@@ -145,12 +145,14 @@ async function boot() {
 
 /** Picks the LocalLLM adapter from settings when the model is first needed. */
 function createRuntimeLoader() {
-  const transformers = createExtensionLlmLoader(browserApi.runtime);
+  const nli = createExtensionLlmLoader(browserApi.runtime);
+  const generative = createExtensionLlmLoader(browserApi.runtime, { generative: true });
   return async (onProgress) => {
     const settings = await storage.getSettings();
     if (settings.llmRuntime === 'ollama') return new OllamaAdapter({ endpoint: settings.llmEndpoint || undefined, model: settings.llmModelName || undefined });
     if (settings.llmRuntime === 'llamacpp') return new LlamaCppAdapter({ endpoint: settings.llmEndpoint || undefined, model: settings.llmModelName || undefined });
-    return transformers(onProgress);
+    if (settings.llmRuntime === 'transformers') return generative(onProgress);
+    return nli(onProgress);
   };
 }
 

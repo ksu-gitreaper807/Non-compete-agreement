@@ -10,7 +10,7 @@
  * "a model that follows the prompt" so the pipeline logic can be measured without weights. Pass
  * `--llm ollama` / `--llm llamacpp` (with a local server running) to measure a real model.
  *
- * Usage: node scripts/benchmark-layers.mjs [--llm mock|ollama|llamacpp] [--endpoint URL] [--model NAME]
+ * Usage: node scripts/benchmark-layers.mjs [--llm mock|nli|ollama|llamacpp] [--endpoint URL] [--model NAME]
  *        [--search-mode uncertain|ambiguous] [--json out.json] [--subset ambiguous]
  */
 import fs from 'node:fs';
@@ -28,7 +28,7 @@ import { MockSearchProvider } from '../src/search/searchProvider.js';
 import { RateLimiter } from '../src/search/rateLimiter.js';
 import { LlmManager } from '../src/llm/llmManager.js';
 import { LlmClassifier } from '../src/llm/llmClassifier.js';
-import { OllamaAdapter, LlamaCppAdapter } from '../src/llm/localLLM.js';
+import { OllamaAdapter, LlamaCppAdapter, NliJudgeAdapter } from '../src/llm/localLLM.js';
 import { PersistentCache } from '../src/storage/cacheStore.js';
 import { informativeWords } from '../src/search/queryBuilder.js';
 
@@ -130,6 +130,7 @@ function metrics(rows) {
 function createLlm() {
   if (args.llm === 'ollama') return new OllamaAdapter({ endpoint: args.endpoint, model: args.model });
   if (args.llm === 'llamacpp') return new LlamaCppAdapter({ endpoint: args.endpoint, model: args.model });
+  if (args.llm === 'nli') return loadNodeNli();
   const DISTRACTION = ['game', 'games', 'gaming', 'celebrity', 'gossip', 'viral', 'entertainment', 'sales', 'business', 'management', 'forbes', 'buzzfeed', 'reddit', 'patch', 'hobbies', 'quizzes', 'design inspiration', 'consulting'];
   return {
     modelVersion: 'mock-llm',
@@ -150,6 +151,22 @@ function createLlm() {
       return JSON.stringify({ classification, confidence, reason: hasContext ? `Context mentions ${evidence.join(', ') || 'nothing decisive'}.` : 'No context establishes what the page is about.', evidence });
     },
   };
+}
+
+/** Real NLI judge in Node via @xenova/transformers (downloads the model on first run). */
+async function loadNodeNli() {
+  const { pipeline } = await import('@xenova/transformers');
+  const clf = await pipeline('zero-shot-classification', args.model ?? 'Xenova/nli-deberta-v3-xsmall', { quantized: true });
+  const entail = async (premise, hypothesis) => {
+    const inputs = clf.tokenizer(premise, { text_pair: hypothesis, padding: true, truncation: true });
+    const { logits } = await clf.model(inputs);
+    const row = Array.from(logits.data);
+    const m = Math.max(...row);
+    const e = row.map((x) => Math.exp(x - m));
+    const sum = e.reduce((a, b) => a + b, 0);
+    return e[clf.entailment_id] / sum;
+  };
+  return new NliJudgeAdapter(entail);
 }
 
 function printReport(rep) {

@@ -49,6 +49,7 @@ async function load() {
 }
 
 const DDG_ORIGIN = 'https://html.duckduckgo.com/*';
+const IN_BROWSER = new Set(['nli', 'transformers']);
 const LOCAL_ORIGINS = ['http://localhost/*', 'http://127.0.0.1/*'];
 const HF_ORIGINS = ['https://huggingface.co/*', 'https://cdn-lfs.huggingface.co/*', 'https://cdn-lfs-us-1.huggingface.co/*', 'https://cas-bridge.xethub.hf.co/*'];
 
@@ -280,11 +281,11 @@ $('warmUp').addEventListener('click', async () => {
 });
 $('llmEnabled').addEventListener('change', async (e) => {
   if (!e.target.checked) return;
-  const origins = $('llmRuntime').value === 'transformers' ? HF_ORIGINS : LOCAL_ORIGINS;
+  const origins = IN_BROWSER.has($('llmRuntime').value) ? HF_ORIGINS : LOCAL_ORIGINS;
   if (!(await requestOrigins(origins))) e.target.checked = false;
 });
 $('llmRuntime').addEventListener('change', () => {
-  const local = $('llmRuntime').value !== 'transformers';
+  const local = !IN_BROWSER.has($('llmRuntime').value);
   $('llmEndpoint').disabled = !local;
   $('llmModelName').disabled = !local;
 });
@@ -292,7 +293,7 @@ $('searchEnabled').addEventListener('change', async (e) => {
   if (e.target.checked && !(await requestOrigins([DDG_ORIGIN]))) e.target.checked = false;
 });
 $('warmUpLlm').addEventListener('click', async () => {
-  if (!(await requestOrigins($('llmRuntime').value === 'transformers' ? HF_ORIGINS : LOCAL_ORIGINS))) return;
+  if (!(await requestOrigins(IN_BROWSER.has($('llmRuntime').value) ? HF_ORIGINS : LOCAL_ORIGINS))) return;
   await send('saveSettings', { llmEnabled: true });
   $('llmEnabled').checked = true;
   $('layer3Info').textContent = 'LLM: downloading… (this can take a few minutes the first time)';
