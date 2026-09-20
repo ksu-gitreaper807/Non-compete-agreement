@@ -65,11 +65,12 @@ test('friction events increment counters', async () => {
   const { tracker } = make();
   await tracker.recordEvent('frictionTriggered');
   await tracker.recordEvent('frictionAbandoned');
-  await tracker.recordEvent('overrideGranted');
+  await tracker.recordEvent('overrideGranted', { minutes: 5 });
   const s = await tracker.getSummary();
   assert.equal(s.today.frictionTriggered, 1);
   assert.equal(s.today.frictionAbandoned, 1);
   assert.equal(s.today.overrides, 1);
+  assert.equal(s.today.overrideGrantedMs, 5 * 60000);
 });
 
 test('session list is bounded', async () => {

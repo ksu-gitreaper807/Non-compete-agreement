@@ -143,7 +143,7 @@ export class SessionTracker {
   }
 
   /** Counter events from the friction manager. */
-  async recordEvent(event) {
+  async recordEvent(event, payload = {}) {
     return this.enqueue(async () => {
       await this.ensureLoaded();
       const day = this.dayBucket(dayKey(this.now()));
@@ -151,7 +151,10 @@ export class SessionTracker {
       else if (event === 'frictionCompleted') day.frictionCompleted++;
       else if (event === 'frictionAbandoned') day.frictionAbandoned++;
       else if (event === 'frictionReset') day.frictionReset++;
-      else if (event === 'overrideGranted') day.overrides++;
+      else if (event === 'overrideGranted') {
+        day.overrides++;
+        day.overrideGrantedMs += Math.round((Number(payload.minutes) || 0) * 60000);
+      }
       await this.deps.saveStats(this.stats);
     });
   }

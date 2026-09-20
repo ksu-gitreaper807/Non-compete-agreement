@@ -166,3 +166,19 @@ test('unlocked countdown expires after the grace period', async () => {
   advance(1_000 + UNLOCK_GRACE_MS);
   assert.equal((await fm.getState({ tabId: 1, domain: 'a.com' })).state, 'BLOCKED');
 });
+
+test('spec §9.5 timeline: access timer starts at Continue, not at friction-page open', async () => {
+  const { fm, advance, events } = make();
+  const t0 = 1_000_000;
+  await fm.startCountdown({ tabId: 9, domain: 'youtube.com', url: 'https://youtube.com/w', frictionSeconds: 10 });
+  advance(10_000);           // 13:20:10 countdown done
+  advance(30_000);           // user hesitates 30 s before pressing Continue (within grace)
+  const r = await fm.grantAccess({ tabId: 9, domain: 'youtube.com', overrideMinutes: 5 });
+  assert.equal(r.ok, true);
+  assert.equal(r.grant.grantedAt, t0 + 40_000);
+  assert.equal(r.grant.expiresAt, t0 + 40_000 + 5 * 60_000, 'expiry counts from the grant, not from page open');
+  const granted = events.find((e) => e[0] === 'overrideGranted');
+  assert.equal(granted[1].minutes, 5);
+  // Grant is domain-scoped: another domain is still blocked.
+  assert.equal((await fm.getState({ tabId: 9, domain: 'reddit.com' })).state, 'BLOCKED');
+});

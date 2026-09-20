@@ -403,6 +403,10 @@ Statistics per day: `frictionTriggered`, `frictionCompleted`, `frictionAbandoned
 
 ## Data model
 
+Day buckets track `frictionTriggered`, `frictionCompleted`, `frictionAbandoned`, `frictionReset`,
+`overrides`, `overrideGrantedMs` (access duration granted) and `overrideMs` (time actually spent
+after overrides); the popup's *Friction this week* panel is built from these.
+
 ```jsonc
 {
   "schemaVersion": 1,

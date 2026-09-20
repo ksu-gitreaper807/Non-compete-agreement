@@ -50,7 +50,7 @@ async function boot() {
   const friction = new FrictionManager({
     load: storage.getFrictionState,
     save: storage.saveFrictionState,
-    onEvent: (event) => sessions.recordEvent(event).catch(() => {}),
+    onEvent: (event, payload) => sessions.recordEvent(event, payload).catch(() => {}),
   });
 
   const cacheLog = DEBUG_CACHE || globalThis.GOALGUARD_DEBUG_CACHE ? (line) => console.debug(line) : null;

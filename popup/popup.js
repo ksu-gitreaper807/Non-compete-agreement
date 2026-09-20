@@ -161,7 +161,14 @@ function renderStats(state) {
   $('progressText').textContent = target > 0
     ? `${formatDuration(week.relevantMs)} of ${formatDuration(target)} productive this week (${pct}%)`
     : `${formatDuration(week.relevantMs)} productive this week`;
-  $('frictionText').textContent = `This week: ${week.frictionTriggered} pauses · ${week.overrides} overrides · ${week.frictionAbandoned} walked away · ${week.frictionReset ?? 0} resets · ${formatDuration(week.overrideMs)} after overrides`;
+  // Distraction attempts = every time the friction page was shown for a fresh countdown.
+  $('wkAttempts').textContent = week.frictionTriggered;
+  $('wkPauses').textContent = week.frictionTriggered;
+  $('wkOverrides').textContent = week.overrides;
+  $('wkAbandoned').textContent = week.frictionAbandoned;
+  $('wkResets').textContent = week.frictionReset ?? 0;
+  $('wkGranted').textContent = formatDuration(week.overrideGrantedMs ?? 0);
+  $('wkOverrideTime').textContent = formatDuration(week.overrideMs);
 }
 
 function renderModel(model, ai) {

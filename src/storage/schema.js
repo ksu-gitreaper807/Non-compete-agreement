@@ -144,6 +144,7 @@ export function createDefaultState() {
  * @property {number} frictionAbandoned
  * @property {number} frictionReset      running countdowns invalidated by tab switch / navigation
  * @property {number} overrides
+ * @property {number} overrideGrantedMs  total access duration granted by overrides
  */
 export function createDayStats() {
   return {
@@ -157,6 +158,7 @@ export function createDayStats() {
     frictionAbandoned: 0,
     frictionReset: 0,
     overrides: 0,
+    overrideGrantedMs: 0,
   };
 }
 
