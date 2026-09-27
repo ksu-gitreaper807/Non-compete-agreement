@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "GoalGuard \u2013 Goal-based Screen Time",
-  "version": "0.1.0",
+  "name": "GoalGuard V2 \u2013 Goal-based Screen Time",
+  "version": "0.2.0",
   "description": "Privacy-first screen-time limiter: local BGE-small embeddings decide whether the current tab is relevant to your weekly goal. No cloud, no telemetry.",
   "homepage_url": "https://github.com/ksu-gitreaper807/Non-compete-agreement",
   "browser_specific_settings": {
     "gecko": {
-      "id": "goalguard@local.extension",
+      "id": "goalguard-v2@local.extension",
       "strict_min_version": "115.0",
       "data_collection_permissions": {
         "required": [
@@ -33,7 +33,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "GoalGuard",
+    "default_title": "GoalGuard V2",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "48": "icons/icon-48.png",

@@ -24,7 +24,7 @@ local LLM resolve ambiguous pages, optionally grounded with a DuckDuckGo search.
 
 1. [Project overview](#project-overview)
 2. [Architecture](#architecture)
-3. [Installation](#installation)
+3. [Download and run it on your own machine](#download-and-run-it-on-your-own-machine)
 4. [Development](#development)
 5. [Model information](#model-information)
 6. [Privacy](#privacy)
@@ -138,28 +138,114 @@ inference directly and keeps globals alive across events, so the model stays loa
 tab switches. All authoritative state is nonetheless persisted to `storage.local`, so the
 extension survives event-page termination without losing countdowns, grants or statistics.
 
-## Installation
+## Download and run it on your own machine
 
-### Temporary install (development)
+You need **Firefox 115 or newer** (Desktop — this is an MV3 Firefox extension, not Chrome) and
+nothing else to *run* it: the embedding model, the Transformers.js runtime and all icons ship in
+the repository, so there is no build step and no download at install time. Node 20+ is only
+needed for the test suite and for packaging/signing.
 
-1. `git clone` this repository (no build step is required — the extension runs from source).
-2. Open Firefox (115 or newer) and go to `about:debugging#/runtime/this-firefox`.
-3. Click **Load Temporary Add-on…** and select `manifest.json` in the repository root.
-4. The options page opens automatically. Enter a weekly goal and save.
-5. Click the GoalGuard toolbar icon to see the verdict for the current tab.
+### 1. Get the code
 
-Temporary add-ons are removed when Firefox restarts; repeat step 3 to reload.
-
-### Packaged install
+Pick one:
 
 ```bash
-npm run package        # → dist/goalguard-0.1.0.zip (≈27 MB)
+# A) with git — clone and check out this branch
+git clone https://github.com/ksu-gitreaper807/Non-compete-agreement.git
+cd Non-compete-agreement
+git checkout arena/01a0e131-non-compete-agreement
+
+# B) without git — download this branch as a ZIP and unzip it
+#    https://github.com/ksu-gitreaper807/Non-compete-agreement/archive/refs/heads/arena/01a0e131-non-compete-agreement.zip
 ```
 
-Load the zip via **Load Temporary Add-on…**, or sign it through
-[addons.mozilla.org](https://addons.mozilla.org/developers/) for a permanent install
-(Firefox Developer Edition / Nightly can install unsigned zips with
-`xpinstall.signatures.required = false`).
+The checkout is large (≈55 MB) because `models/` (BGE-small, ONNX int8) and `vendor/`
+(Transformers.js + ONNX Runtime WebAssembly) are committed on purpose: the extension must work
+offline on the first run.
+
+### 2. Load it into Firefox
+
+**Option A — temporary install (simplest).**
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on…** and select `manifest.json` in the repository root.
+3. The options page opens. Enter a weekly goal and press **Save**.
+4. Click the GoalGuard toolbar icon to see the verdict for the current tab.
+
+Temporary add-ons are removed when Firefox restarts — repeat step 2 to reload. Your goal, rules,
+statistics and caches survive (they live in `storage.local`, keyed by the add-on ID).
+
+**Option B — one command, fresh profile** (needs `npm install` once; starts Firefox 115+ with the
+extension already loaded, and reloads it when you edit a file):
+
+```bash
+npm install
+npm start          # web-ext run
+# if Firefox isn't found automatically:
+# npx web-ext run --firefox /path/to/firefox
+```
+
+**Option C — packaged install** (build the archive, then install the file):
+
+```bash
+npm install
+npm run package    # → dist/goalguard-v2-0.2.0.zip and .xpi (≈27 MB, byte-identical)
+```
+
+Load `dist/goalguard-v2-0.2.0.zip` via **Load Temporary Add-on…**, or install it permanently on
+Firefox Developer Edition / Nightly / ESR after setting `xpinstall.signatures.required = false`
+in `about:config`. **Release Firefox only installs signed builds** — see
+[docs/SIGNING.md](docs/SIGNING.md) (`npm run sign`, a few minutes, free AMO account).
+
+### 3. First run checklist
+
+1. **Options → Goal**: type your weekly goal, press *Save* (anchors are generated automatically).
+2. **Options → AI classification → Load model now** — warms up the bundled BGE-small model
+   (≈0.4–1 s on first use anyway).
+3. Optional, for the ambiguous pages embeddings cannot decide: tick **Enable local AI judge**
+   and **Download & load LLM now** (one-time ≈70 MB NLI judge from Hugging Face), then add your
+   own notes under **Extra context for the AI judge** and check them with **Show the prompt the
+   judge will receive**.
+4. Browse. Click the toolbar icon → **Why?** to see the reasoning, and answer **Correct? Yes/No**
+   to record local feedback.
+
+### 4. Keeping it current
+
+```bash
+git pull                       # on this branch
+# then: about:debugging → Reload (temporary install), or `npm run package` and reinstall
+```
+
+A version bump changes the add-on name/version shown in `about:addons`; the popup and the options
+page header show `V2 · v0.2.0` so you always know which build is running.
+
+### About the "V2" identity
+
+This branch ships a **distinct add-on identity** so it can be installed next to the original
+without Firefox renaming or replacing either one: Firefox identifies an add-on by its ID, not by
+its name — two installs with the same ID are the *same* add-on (loading V2 under V1's ID would
+silently replace it), and two installs sharing a display name get the ID appended in
+`about:addons`. A separate ID plus "V2" in the name avoids both:
+
+| | V1 | this build (V2) |
+| --- | --- | --- |
+| `name` | `GoalGuard – Goal-based Screen Time` | `GoalGuard V2 – Goal-based Screen Time` |
+| `version` | `0.1.0` | `0.2.0` |
+| `browser_specific_settings.gecko.id` | `goalguard@local.extension` | `goalguard-v2@local.extension` |
+| archive | `dist/goalguard-0.1.0.zip` | `dist/goalguard-v2-0.2.0.zip` |
+
+Consequences worth knowing:
+
+* V1 and V2 **do not share storage** — each keeps its own goal, rules, statistics and caches.
+  Export anything you want to keep before switching (Options → *Export feedback (JSON)* covers
+  feedback; the rest is re-created in a minute).
+* Remove the one you no longer want from `about:addons` so the toolbar icon is unambiguous.
+* If you later want V2 to act as an **update** to an existing V1 install, set the ID back to
+  `goalguard@local.extension` in `manifest.json` and keep bumping the version — Firefox routes
+  updates by ID, never by name.
+* The archive basename is hard-coded (`ARTIFACT_BASENAME` in `scripts/package.mjs`) rather than
+  slugified out of the display name, so you get `goalguard-v2-0.2.0.zip` instead of a mangled
+  `goalguard_v2_goal_based_screen_time-0.2.0.zip`.
 
 ### Permissions requested
 
@@ -178,11 +264,13 @@ download, `html.duckduckgo.com` for web context, `localhost` for an Ollama/llama
 ## Development
 
 ```bash
-npm install            # dev dependency only: @xenova/transformers for Node tests/benchmarks
-npm test               # unit + model + integration tests (Node ≥ 20)
+npm install            # dev dependencies only: web-ext + @xenova/transformers (Node ≥ 20)
+npm start              # web-ext run: Firefox with the extension loaded and auto-reloaded
+npm test               # unit + model + integration tests
+npm run test:unit      # 144 tests, no model needed
 npm run benchmark      # accuracy + latency + memory on tests/data/titles.json
-npm run lint:manifest  # verifies every referenced asset exists and CSP allows WASM
-npm run package        # zip for distribution
+npm run lint:manifest  # verifies every referenced asset exists, versions agree, CSP allows WASM
+npm run package        # → dist/goalguard-v2-0.2.0.{zip,xpi}
 ```
 
 There is no bundler or transpiler; every file is a plain ES module Firefox loads directly.
@@ -659,7 +747,7 @@ mock is not a language model and the fixtures were written by the author.
   embedding cache is persisted to soften this.
 * Developed and tested on Linux via automated tests against a faithful `browser` API stub and
   the real model; manual verification in a desktop Firefox profile is still recommended
-  before wider use (see Installation).
+  before wider use (see [Download and run it on your own machine](#download-and-run-it-on-your-own-machine)).
 
 ## Using and verifying the AI layers
 

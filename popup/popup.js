@@ -363,6 +363,15 @@ $('openOptions').addEventListener('click', (e) => {
   api.runtime.openOptionsPage();
 });
 
+// Show which build is loaded — two installs with the same name are indistinguishable otherwise.
+try {
+  const { version, name } = api.runtime.getManifest();
+  $('versionTag').textContent = `V2 · v${version}`;
+  document.title = `${name} — v${version}`;
+} catch {
+  /* manifest metadata is cosmetic */
+}
+
 refresh();
 const timer = setInterval(refresh, 3000);
 window.addEventListener('unload', () => clearInterval(timer));

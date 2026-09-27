@@ -2,9 +2,9 @@
 /**
  * Builds the distributable GoalGuard archives in dist/:
  *
- *   goalguard-<version>.zip   — upload this to addons.mozilla.org for signing
+ *   goalguard-v2-<version>.zip — upload this to addons.mozilla.org for signing
  *                                (also loadable via "Load Temporary Add-on…").
- *   goalguard-<version>.xpi   — byte-identical to the .zip. An .xpi IS a zip file
+ *   goalguard-v2-<version>.xpi — byte-identical to the .zip. An .xpi IS a zip file
  *                                with a different extension; it is what Firefox
  *                                installs. Release-channel Firefox only accepts
  *                                .xpi files carrying a Mozilla signature, so the
@@ -30,6 +30,13 @@ import { checkManifest } from './check-manifest.mjs';
  * same file set — keep the packaging logic here, in one place.
  */
 export const INCLUDE = ['manifest.json', 'src', 'popup', 'options', 'blocking', 'ledger', 'icons', 'vendor', 'models', 'LICENSE'];
+
+/**
+ * Archive basename. Hard-coded rather than slugified from `manifest.name` so the file name
+ * stays stable and readable ("goalguard-v2-0.2.0.zip") instead of being mangled out of the
+ * display name ("goalguard_v2_goal_based_screen_time-0.2.0.zip").
+ */
+export const ARTIFACT_BASENAME = 'goalguard-v2';
 export const exclude = (rel) => rel.endsWith('.map') || path.basename(rel) === '.DS_Store' || rel === 'models/README.md';
 
 export function collectFiles(root, include = INCLUDE) {
@@ -133,7 +140,7 @@ function main() {
   const exts = format === 'both' ? ['zip', 'xpi'] : [format];
   fs.mkdirSync(path.join(root, outDir), { recursive: true });
   for (const ext of exts) {
-    const out = path.join(root, outDir, `goalguard-${manifest.version}.${ext}`);
+    const out = path.join(root, outDir, `${ARTIFACT_BASENAME}-${manifest.version}.${ext}`);
     fs.writeFileSync(out, archive);
     console.log(`Wrote ${path.relative(root, out)} (${files.length} files, ${(fs.statSync(out).size / 1048576).toFixed(1)} MB)`);
   }

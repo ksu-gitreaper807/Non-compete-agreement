@@ -12,7 +12,7 @@ and a one-command signing flow. The only thing you must bring is a (free) AMO
 account — signing cannot be done offline and no key in this repo can substitute for it.
 
 ```bash
-npm run package   # → dist/goalguard-0.1.0.{zip,xpi}  (unsigned, byte-identical)
+npm run package   # → dist/goalguard-v2-0.2.0.{zip,xpi}  (unsigned, byte-identical)
 npm run lint:amo  # Mozilla's addons-linter: must report 0 errors
 npm run sign      # upload → AMO signs → web-ext-artifacts/*.xpi (installable)
 ```
@@ -92,7 +92,7 @@ npm run sign   # web-ext sign --channel=unlisted
 ```
 
 AMO validates the upload automatically, signs it, and `web-ext` downloads the
-result to `web-ext-artifacts/` (e.g. `goalguard_goal-based_screen_time-0.1.0.xpi`).
+result to `web-ext-artifacts/` (e.g. `goalguard-v2-0.2.0.xpi`).
 Total time is typically a few minutes for a package this size. Host that file
 anywhere (GitHub Releases, your site) — it installs on any release Firefox.
 
@@ -161,9 +161,12 @@ fails with *"has not been verified"*; the signed one installs silently.
 - Every upload to AMO needs a **new version number** — re-uploading an existing
   version fails. Bump `version` in `manifest.json` **and** `package.json` together
   (`lint:manifest` errors if they disagree).
-- Never change `browser_specific_settings.gecko.id`
-  (`goalguard@local.extension`): Firefox treats a new ID as a different add-on and
-  updates stop reaching existing installs.
+- Be deliberate about `browser_specific_settings.gecko.id`: Firefox identifies an add-on by
+  its ID, never by its name, so **changing the ID creates a brand-new add-on** (own storage, no
+  update path). This branch intentionally ships V2 under `goalguard-v2@local.extension` so it can
+  sit next to the `goalguard@local.extension` V1 build without either name being mangled. If you
+  want this build to be an *update* to an existing install, set the ID back to that install's ID
+  and keep bumping `version`.
 
 ## Troubleshooting
 
@@ -171,7 +174,7 @@ fails with *"has not been verified"*; the signed one installs silently.
 | --- | --- |
 | *"has not been verified"* on install | File was never signed, or you grabbed `dist/` (unsigned) instead of `web-ext-artifacts/` (signed). Run `npm run sign` and install the downloaded file. |
 | *"appears to be corrupt"* | Truncated download, or installing an *older* version over a newer one. Re-download; versions must always increase. |
-| `Version 0.1.0 already exists` from `sign` | AMO keeps every upload. Bump the version (both manifests) and retry. |
+| `Version 0.2.0 already exists` from `sign` | AMO keeps every upload. Bump the version (both manifests) and retry. |
 | `sign` times out | Large uploads + validation can take minutes. Check the Developer Hub first — the signed file may already be ready for download. Otherwise retry (bumping the version if the first attempt registered one). |
 | `lint:amo` errors after adding a file | AMO lints the same set; fix locally until `errors 0`. Files outside `INCLUDE` are automatically excluded from both lint and sign. |
 | Credentials rejected | Regenerate at the API-key page; check for pasted whitespace; both env vars must be exported in the signing shell. |

@@ -374,4 +374,12 @@ $('resetAll').addEventListener('click', async () => {
   await load();
 });
 
+try {
+  const { version, name } = api.runtime.getManifest();
+  $('versionTag').textContent = `V2 · v${version}`;
+  document.title = `${name} — v${version}`;
+} catch {
+  /* manifest metadata is cosmetic */
+}
+
 load();
