@@ -59,21 +59,31 @@ export class DecisionPipeline {
     if (regexResult) return finish(decorate(regexResult, { sourceKind: sourceKindOf(regexResult.source), confidence: 1, evidenceQuality: EVIDENCE_QUALITY.HIGH }));
     if (signal?.stale) return finish(staleResult());
 
+    // 3 + 4. Web context and local LLM — only for genuinely uncertain pages.
+    const generic = isGenericTitle(context.text);
+    const llmWanted = Boolean(this.llm) && settings.llmEnabled === true;
+
     // 2. Semantic similarity.
     let embeddingResult = null;
+    let reviewingBlock = false;
     if (this.embedding && settings.embeddingsEnabled !== false) {
       embeddingResult = await this.runStage('embedding', this.embedding, context, trace, timings);
       if (embeddingResult && embeddingResult.confident !== false) {
-        return finish(decorate(embeddingResult, { sourceKind: SOURCE.EMBEDDING, confidence: embeddingConfidence(embeddingResult), evidenceQuality: EVIDENCE_QUALITY.MEDIUM }));
+        // A confident *block* is the most expensive mistake the extension can make, and the
+        // embedding layer is the layer most likely to be confidently wrong about a page whose
+        // title shares no vocabulary with the goal ("Google Antigravity", "USACO Guide"). Give
+        // the judge a second opinion before it takes effect instead of trusting it blindly.
+        reviewingBlock = this.shouldReviewBlock(settings, llmWanted, embeddingResult);
+        if (!reviewingBlock) {
+          return finish(decorate(embeddingResult, { sourceKind: SOURCE.EMBEDDING, confidence: embeddingConfidence(embeddingResult), evidenceQuality: EVIDENCE_QUALITY.MEDIUM }));
+        }
+        this.telemetry.bump('secondOpinions');
       }
     }
     if (signal?.stale) return finish(staleResult());
 
-    // 3 + 4. Web context and local LLM — only for genuinely uncertain pages.
-    const generic = isGenericTitle(context.text);
-    const llmWanted = Boolean(this.llm) && settings.llmEnabled === true;
     let searchOutcome = null;
-    if (llmWanted && this.shouldSearch(settings, generic, embeddingResult)) {
+    if (llmWanted && this.shouldSearch(settings, generic, embeddingResult, reviewingBlock)) {
       onStage('searching');
       searchOutcome = await this.runSearch(context, settings, trace, timings);
       if (signal?.stale) return finish(staleResult());
@@ -83,17 +93,31 @@ export class DecisionPipeline {
       onStage('analyzing');
       const llmResult = await this.runStage('llm', this.llm, { ...context, previous: embeddingResult, search: searchOutcome }, trace, timings);
       if (llmResult) {
-        return finish(this.applyEvidencePolicy(llmResult, { settings, generic, searchOutcome, embeddingResult }));
+        return finish(this.applyEvidencePolicy(llmResult, { settings, generic, searchOutcome, embeddingResult, reviewingBlock }));
       }
     }
 
-    // 5. Fallback: the tentative embedding verdict, else "unknown".
-    if (embeddingResult) return finish(decorate(embeddingResult, { sourceKind: SOURCE.EMBEDDING, confidence: embeddingConfidence(embeddingResult), evidenceQuality: EVIDENCE_QUALITY.LOW, searchUsed: Boolean(searchOutcome) }));
+    // 5. Fallback: the tentative embedding verdict, else "unknown". Reached when the judge was
+    // asked for a second opinion and produced nothing — the block then stands rather than being
+    // silently lifted by a failed call.
+    if (embeddingResult) return finish(decorate(embeddingResult, { sourceKind: SOURCE.EMBEDDING, confidence: embeddingConfidence(embeddingResult), evidenceQuality: EVIDENCE_QUALITY.LOW, searchUsed: Boolean(searchOutcome), reviewed: reviewingBlock }));
     return finish(decorate(makeResult(CLASSIFICATION.UNKNOWN, 'fallback', 'No classifier produced a result'), { sourceKind: SOURCE.FALLBACK, confidence: 0, evidenceQuality: EVIDENCE_QUALITY.NONE }));
   }
 
-  shouldSearch(settings, generic, embeddingResult) {
+  /**
+   * Ask the judge to re-examine a page the embedding layer confidently called irrelevant.
+   * Opt-out (`settings.llmSecondOpinion`, default on): it costs one judgment per blocked page
+   * (cached for 7 days like any LLM verdict) and turns a wrong block into a warning.
+   */
+  shouldReviewBlock(settings, llmWanted, embeddingResult) {
+    if (!llmWanted || settings.llmSecondOpinion === false) return false;
+    return embeddingResult?.classification === CLASSIFICATION.IRRELEVANT;
+  }
+
+  shouldSearch(settings, generic, embeddingResult, reviewingBlock = false) {
     if (!this.search || settings.searchEnabled !== true) return false;
+    // A second opinion is exactly the case where "what is this page actually about?" matters.
+    if (reviewingBlock) return true;
     if (settings.searchMode === SEARCH_MODE.UNCERTAIN) return true;
     // 'ambiguous': only titles that carry too little information on their own, or when the
     // embedding layer could not run at all.
@@ -140,11 +164,16 @@ export class DecisionPipeline {
    *  - a definite verdict with no usable evidence → questionable;
    *  - evidence phrases the model invented are dropped and reduce confidence.
    */
-  applyEvidencePolicy(llmResult, { settings, generic, searchOutcome, embeddingResult }) {
+  applyEvidencePolicy(llmResult, { settings, generic, searchOutcome, embeddingResult, reviewingBlock = false }) {
     const searchUsed = Boolean(searchOutcome);
     // Without web context the only evidence is the title itself: worthless when generic, weak otherwise.
     const evidenceQuality = searchUsed ? searchOutcome.evidenceQuality : generic ? EVIDENCE_QUALITY.NONE : EVIDENCE_QUALITY.LOW;
     let { classification, confidence } = llmResult;
+    // A second opinion with nothing to reason about is inconclusive, not a reprieve: a generic
+    // title that arrived without web context cannot overturn the embedding verdict either way.
+    if (reviewingBlock && classification === CLASSIFICATION.QUESTIONABLE && evidenceQuality === EVIDENCE_QUALITY.NONE && embeddingResult) {
+      return decorate({ ...embeddingResult, reviewed: true, reviewInconclusive: true }, { sourceKind: SOURCE.EMBEDDING, confidence: embeddingConfidence(embeddingResult), evidenceQuality, searchUsed });
+    }
     const notes = [];
     const llm = llmResult.llm ?? {};
     if (llm.unsupportedEvidence?.length && !llm.evidence?.length) {

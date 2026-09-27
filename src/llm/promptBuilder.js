@@ -110,6 +110,10 @@ export function buildLlmPayload({ goal, title, domain, semantic, webContext, hin
     const item = { title: String(r.title ?? '').slice(0, 160) };
     if (r.domain) item.domain = String(r.domain).slice(0, 100);
     if (r.snippet) item.snippet = String(r.snippet).slice(0, 240);
+    // How well this row matched the page (search ranking). The NLI judge uses it to weight
+    // rows; chat models are told to treat low numbers as "probably a different page".
+    const relevance = Number(r.relevance);
+    if (Number.isFinite(relevance)) item.relevance = Math.round(relevance * 100) / 100;
     return item;
   });
   const payload = {

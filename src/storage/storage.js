@@ -104,6 +104,8 @@ function sanitizeSettings(patch) {
   if ('llmEndpoint' in out) out.llmEndpoint = String(out.llmEndpoint ?? '').trim().slice(0, 200);
   if ('llmModelName' in out) out.llmModelName = String(out.llmModelName ?? '').trim().slice(0, 100);
   if ('llmContextNotes' in out) out.llmContextNotes = sanitizeExtraContext(out.llmContextNotes);
+  if ('llmSecondOpinion' in out) out.llmSecondOpinion = out.llmSecondOpinion !== false;
+  if ('llmTimeoutMs' in out) out.llmTimeoutMs = Math.round(num(out.llmTimeoutMs, 5000, 600000, DEFAULT_SETTINGS.llmTimeoutMs));
   if ('allowedDomains' in out) out.allowedDomains = cleanList(out.allowedDomains);
   if ('blockedDomains' in out) out.blockedDomains = cleanList(out.blockedDomains);
   return out;

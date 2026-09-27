@@ -35,7 +35,9 @@ local LLM resolve ambiguous pages, optionally grounded with a DuckDuckGo search.
 11. [Testing](#testing)
 12. [Benchmark](#benchmark)
 13. [Known limitations](#known-limitations)
-14. [Future LLM integration](#future-llm-integration)
+14. [Choosing a judge model (and what a bigger one costs)](#choosing-a-judge-model-and-what-a-bigger-one-costs)
+15. [Using and verifying the AI layers](#using-and-verifying-the-ai-layers)
+16. [Future LLM integration](#future-llm-integration)
 
 ---
 
@@ -597,7 +599,8 @@ after overrides); the popup's *Friction this week* panel is built from these.
     "embeddingsEnabled": true, "llmEnabled": false, "searchEnabled": false,
     "searchMode": "ambiguous", "searchMaxResults": 5, "searchCacheHours": 24,
     "llmRuntime": "nli", "llmEndpoint": "", "llmModelName": "",
-    "llmMinConfidence": 0.6, "llmContextNotes": ""
+    "llmMinConfidence": 0.6, "llmSecondOpinion": true, "llmTimeoutMs": 45000,
+    "llmContextNotes": ""
   },
   "rules":   { "allow": ["\\bOSTEP\\b"], "block": ["\\bHelldivers\\b"] },
   "anchors": { "positive": ["operating systems", "virtual memory"], "negative": ["video games and gaming"], "generatedFromGoal": "…" },
@@ -619,7 +622,7 @@ Limits: see [Caching](#caching); sessions 2000 / 14 days retention (`schema.js �
 
 ```bash
 npm test                 # everything (≈30 s)
-npm run test:unit        # 144 tests, no model needed
+npm run test:unit        # 151 tests, no model needed
 npm run test:model       # real BGE model: embeddings, similarity ordering, fixture titles
 npm run test:integration # boots the real background.js against a fake `browser` API
 ```
@@ -644,8 +647,9 @@ Coverage highlights:
 * **Layer 3:** verdict parsing, prompt content (primer, hints, user context, NLI premise/hypothesis
   framing), DuckDuckGo HTML parsing, retrieval cache +
   dedupe + permission gating + failure → null, LLM manager lazy load / dedupe / unavailable,
-  classifier gating (disabled, confident, no previous), `llm` vs `llm+search`, pipeline
-  fallback to the embedding verdict on LLM error.
+  classifier gating (disabled, confident, no previous), `llm` vs `llm+search`, row weighting and
+  trimming, threshold-relative confidence, second opinion (rescued / inconclusive / failed),
+  pipeline fallback to the embedding verdict on LLM error.
 * **Integration:** goal → anchors → relevant page allowed → irrelevant page redirected →
   countdown → Continue refused early / accepted later → grant → no re-redirect → statistics →
   revoke → re-friction; tab switch mid-countdown → background tab `inactive` → return gives a
@@ -735,6 +739,12 @@ mock is not a language model and the fixtures were written by the author.
   with offline search fixtures and a rule-following mock LLM (see Benchmark). Real DuckDuckGo
   HTML and real model inference could not be exercised in the development sandbox (no
   network) — the integration tests inject a fake LLM and a fake `fetch`.
+* **Retrieval ≠ adjudication.** Search rows are ranked by how well they match the *title*, which
+  is not the same as "useful for deciding about the goal" — a look-alike page ("Antigravity
+  (physics)" for "Google Antigravity") ranks highest and contradicts the goal. The judge
+  therefore weights rows, trims the most contradictory one, and never blocks on a mixed average.
+  Even so, the two layers are only as good as the query: it is built from the title (plus the
+  domain for short titles), never the goal, to keep the goal off the wire.
 * **Judge cost.** Default NLI judge: ≈70 MB one-time download, ~150 MB RAM, ~20–50 ms per
   premise. Generative Qwen option: ≈400 MB, ~1 GB RAM, seconds per judgment. Both unload
   after 10 min idle. The NLI thresholds (0.7 / 0.3 entailment) are heuristics. DuckDuckGo's HTML markup may change; the parser
@@ -749,12 +759,67 @@ mock is not a language model and the fixtures were written by the author.
   the real model; manual verification in a desktop Firefox profile is still recommended
   before wider use (see [Download and run it on your own machine](#download-and-run-it-on-your-own-machine)).
 
+## Choosing a judge model (and what a bigger one costs)
+
+The judge only sees pages the cheap layers could not decide (plus, with *Second opinion*, pages
+they confidently blocked), so its cost is paid rarely — but its quality decides whether the
+extension is helpful or infuriating. Rough numbers for a ~2k-token primed prompt and a ~80-token
+verdict:
+
+| Runtime / model | Download | RAM while judging | Time per page (CPU) | Follows the primer | Handles new names* |
+| --- | --- | --- | --- | --- | --- |
+| **NLI `nli-deberta-v3-xsmall`** (default, in-browser) | ≈70 MB | ≈150 MB | **≈0.15–0.3 s** | no — it only scores one sentence | **poor** |
+| **Qwen2.5-0.5B-Instruct** (in-browser, `transformers`) | ≈400 MB | ≈1 GB | ≈3–8 s | partly | poor |
+| **qwen3:0.6b** via Ollama | ≈520 MB | ≈1 GB | ≈2–5 s (≈0.3 s w/ GPU) | partly | poor |
+| **qwen3:1.7b** via Ollama | ≈1.3 GB | ≈2 GB | ≈6–15 s (≈0.6 s w/ GPU) | mostly | fair |
+| **qwen3:4b** / **phi4-mini** via Ollama | ≈2.5–3 GB | ≈3–4 GB | ≈15–40 s (≈1–2 s w/ GPU) | yes | good |
+| **qwen3:8b** / **llama3.1:8b** via Ollama | ≈5 GB | ≈6 GB | ≈30–90 s (≈2–4 s w/ GPU) | yes | good |
+
+\* "New names" = products/terms that post-date the model's training data ("Google Antigravity",
+a new course code, a tool you just started using). A 22M-parameter NLI model has no idea what
+they are and scores them by surface words; a 4B instruct model can read the search snippet and
+reason about it. This is the single biggest accuracy jump, and it is exactly the failure you hit
+with `antigravity.google` and `usaco.org`.
+
+**Trade-offs, honestly:**
+
+* **Latency is the real cost**, not disk. The judge runs while you wait for the tab. The NLI
+  judge answers in under a third of a second; a 4B model on CPU takes 15–40 s, which blocks the
+  classification (and feels like a hang) unless you have a GPU. On Apple Silicon or an NVIDIA
+  card Ollama is 10–20× faster and 4B becomes genuinely pleasant.
+* **Timeout.** Raise **Options → AI classification → Judgment timeout** (default 45 s) when you
+  move to a bigger model; a timed-out judgment falls back to the embedding verdict, which is the
+  thing you were trying to escape.
+* **Context window.** The primed prompt is ≈2k tokens. `num_ctx` is pinned to 4096 for Ollama
+  (some builds default to 2048 and would truncate the instructions); for llama.cpp start the
+  server with `-c 4096` or more. Adding a long *Extra context* note eats into that.
+* **Bigger is not automatically better-behaved.** Large models are more willing to reason from
+  thin evidence, so they produce more confident `irrelevant` verdicts — which is what you want
+  only if they are right. The safety net is unchanged: verdicts below `llmMinConfidence`, or
+  with no evidence, are downgraded to `questionable`, and evidence phrases that are not in the
+  supplied text are dropped.
+* **Where the model is not the bottleneck.** Three things cap accuracy regardless of size:
+  (1) the judge is only asked about pages the embeddings abstained on — fixed by *Second
+  opinion*; (2) the search query is built from the title, never the goal (privacy), so the
+  context can miss the point of the page entirely; (3) a 22M model cannot be taught by prompt
+  engineering alone — the primer helps chat models far more than it helps the NLI judge.
+
+**Recommendation:** keep the NLI judge if you want it invisible; switch to **Ollama +
+`qwen3:4b`** (or `qwen3:1.7b` on a modest machine) if you have 8 GB+ free RAM and want the
+judge to actually read the context, then raise the timeout to 90–120 s. On CPU-only hardware,
+`qwen3:0.6b`/`1.7b` plus *Second opinion* is the best accuracy-per-second compromise. Switching
+is just typing the tag into **Model name** (`llmModelName`) — each runtime has its own cache
+identity, so verdicts are re-computed rather than reused.
+
 ## Using and verifying the AI layers
 
 1. Options → **AI classification** → tick *Enable local AI judge*; approve the permission
    Firefox shows (Hugging Face for the in-browser runtimes, or `localhost` for Ollama / llama.cpp).
    The default runtime is the ≈70 MB NLI judge.
-   Optionally tick *Enable semantic web search* and approve `html.duckduckgo.com`.
+   Optionally tick *Enable semantic web search* and approve `html.duckduckgo.com`: without it the
+   judge only ever sees the title, so a second opinion usually stays inconclusive.
+   Keep **Second opinion** ticked (default) — it lets the judge re-examine pages the embeddings
+   confidently *block*, which is where false blocks on sites like `usaco.org` come from.
 2. Add anything the judge should know about your goal in *Extra context for the AI judge*
    (optional but the single biggest lever on accuracy — see [Context priming](#classification-algorithm)).
 3. Click **Download & load LLM now** (one-time, a few minutes) — the status line shows progress.
@@ -768,8 +833,10 @@ mock is not a language model and the fixtures were written by the author.
    Options). Tick *Debug mode* to see the `TITLE / REGEX / BGE / SEARCH / LLM / FINAL / TOTAL`
    block in the popup.
 
-To use Qwen3-0.6B today: `ollama pull qwen3:0.6b`, choose *Ollama on localhost* as runtime, and
-leave endpoint/model empty (defaults to `http://localhost:11434`, `qwen3:0.6b`).
+To use a stronger judge today: `ollama pull qwen3:4b` (or `qwen3:1.7b` on a modest machine),
+choose *Ollama on localhost* as runtime, put the tag in **Model name**, and raise the
+**Judgment timeout** to ~90 s — see
+[Choosing a judge model](#choosing-a-judge-model-and-what-a-bigger-one-costs).
 
 ## Acknowledgements
 

@@ -138,8 +138,16 @@ this shape with `results: []`; nothing throws into the pipeline.
 
 ## 2c. Layer 4 — local LLM (`llm/`)
 
-Gate: `settings.llmEnabled` ∧ Layer 2 not confident (or unavailable) ∧ runtime not in
-cool-down.
+Gate: `settings.llmEnabled` ∧ runtime not in cool-down ∧ (Layer 2 was not confident **or**
+`settings.llmSecondOpinion` and Layer 2 confidently said `irrelevant`).
+
+The second gate is the fix for the worst failure mode: BGE compares *vocabulary*, so a page whose
+title shares no words with the goal ("Google Antigravity", "USACO Guide") can be confidently
+scored irrelevant and blocked before any slower layer sees it. With `llmSecondOpinion` (default
+on) a confident block is re-examined — always with a search when search is enabled, because the
+review needs evidence to be meaningful. If the review comes back with no evidence at all
+(empty search, generic title) it is *inconclusive* and the original verdict stands rather than
+silently unblocking the page; if the judge produces nothing usable the block also stands.
 
 * **Payload** (`promptBuilder.buildLlmPayload`): `{goal, page: {title, domain}, semantic:
   {goalSimilarity, positiveSimilarity, negativeSimilarity}, hints: {titleIsGeneric,
@@ -178,8 +186,18 @@ cool-down.
   titled "…". That result says: …`. `p = contextAvg·2/3 + title·1/3` (title only when no
   context); `p ≥ 0.7` → relevant, `p ≤ 0.3` → irrelevant, else questionable;
   `confidence = |p − 0.5|·2`; evidence = the rows that crossed the threshold (so it is grounded
-  by construction). A generic title that arrives with **no** web context short-circuits to
-  `questionable` with confidence 0 — trap 2 enforced in code, and it saves the inference. Optional generative adapters:
+  by construction). Aggregation is deliberately robust to search noise, which is the usual
+  reason the two layers "disagree": each row is weighted by its `relevance` (0.3 + 0.7·relevance),
+  the single most contradictory row is trimmed when ≥3 rows exist (a search for
+  "Google Antigravity" legitimately returns "Antigravity (physics)", which ranks *highest* by
+  title similarity and would otherwise cancel every on-target row), and a low average can never
+  block: if any row reaches the relevant threshold the verdict is `questionable`, not
+  `irrelevant` (dilution guard). `confidence` is measured against the decision thresholds, not
+  against the undecided middle — `0.6 + 0.4·(p − 0.7)/0.3` for relevant, mirrored for irrelevant,
+  and ≤0.45 for questionable. The old `|p − 0.5|·2` reported 0.4 for a page sitting exactly on
+  the relevant threshold, so real hits were downgraded to `questionable` by the evidence policy.
+  A generic title that arrives with **no** web context short-circuits to `questionable` with
+  confidence 0 — trap 2 enforced in code, and it saves the inference. Optional generative adapters:
   in-extension Transformers.js (Qwen2.5-0.5B, greedy, ≤120 new tokens), Ollama (`/api/chat`, `format: json`) and llama.cpp
   server (`/v1/chat/completions`, `response_format: json_object`). Non-localhost endpoints throw
   at construction. `LlmManager` adds lazy load with progress, 30 s timeout, per-prompt in-flight

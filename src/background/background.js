@@ -81,9 +81,12 @@ async function boot() {
 
   // The LLM runtime is chosen from settings at load time (in-browser Transformers.js by
   // default; Ollama / llama.cpp servers on localhost as alternatives). Tests may inject a loader.
+  const bootSettings = await storage.getSettings();
   const llmManager = new LlmManager({
     loader: globalThis.GOALGUARD_LLM_LOADER ?? createRuntimeLoader(),
-    modelVersion: runtimeModelVersion(await storage.getSettings()),
+    modelVersion: runtimeModelVersion(bootSettings),
+    // Larger local models (Qwen3-4B and friends) need far more than the 30 s default.
+    timeoutMs: Number(bootSettings.llmTimeoutMs) || 45000,
   });
   const searchManager = new SearchManager({
     provider: new DuckDuckGoSearchProvider({
@@ -148,6 +151,7 @@ async function boot() {
         // Next judgment loads the newly selected runtime under its own cache identity.
         llmManager.configure({ modelVersion: runtimeModelVersion(next) }).then(() => llmManager.unload()).catch(() => {});
       }
+      if (next?.llmTimeoutMs && next.llmTimeoutMs !== prev?.llmTimeoutMs) llmManager.timeoutMs = Number(next.llmTimeoutMs);
       tabMonitor.refreshActive().catch(() => {});
     }
   });

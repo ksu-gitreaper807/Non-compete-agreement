@@ -23,7 +23,8 @@ test('buildLlmPayload contains only goal, page, semantic numbers, hints and trim
   assert.deepEqual(Object.keys(p), ['goal', 'page', 'semantic', 'hints', 'webContext']);
   assert.equal(p.semantic.goalSimilarity, 0.51);
   assert.equal(p.webContext.length, 5);
-  assert.deepEqual(Object.keys(p.webContext[0]), ['title', 'domain', 'snippet']);
+  assert.deepEqual(Object.keys(p.webContext[0]), ['title', 'domain', 'snippet', 'relevance']);
+  assert.equal(p.webContext[0].relevance, 0.5);
   assert.ok(!JSON.stringify(p).includes('secret/url'));
   assert.equal(p.hints.hasWebContext, true);
   assert.equal(p.hints.titleIsGeneric, false);
@@ -256,6 +257,80 @@ test('NLI judge frames the premise as a page description and the hypothesis as a
   assert.match(seen[0].premise, /It is a video page\./);
   assert.match(seen[1].premise, /returned a result titled "Kernel dev talk"/);
   assert.match(seen[1].premise, /That result says: linux kernel scheduling/);
+});
+
+test('NLI judge survives a look-alike row that outranks the real one', async () => {
+  // "Antigravity (physics)" shares the name and therefore ranks *highest* by title similarity,
+  // yet it contradicts the goal. Weighting alone still let it win; the trimmed mean does not.
+  const rows = [
+    { title: 'Antigravity (physics)', snippet: 'a hypothetical force opposing gravity', relevance: 0.95 },
+    { title: 'Google Antigravity', snippet: 'an agent-first AI coding IDE from Google', relevance: 0.6 },
+    { title: 'Antigravity docs', snippet: 'build and ship agents in the IDE', relevance: 0.5 },
+  ];
+  const judge = new NliJudgeAdapter(async (premise) => {
+    if (premise.startsWith('A web page')) return 0.5; // the title alone says nothing
+    return /opposing gravity|physics/i.test(premise) ? 0.05 : 0.92;
+  });
+  const payload = { goal: 'learn to build AI agents', page: { title: 'Google Antigravity', domain: 'antigravity.google' }, hints: { titleIsGeneric: true, hasWebContext: true }, webContext: rows };
+  const verdict = parseLlmResponse(await judge.complete(buildMessages(payload)));
+  assert.equal(verdict.classification, 'relevant');
+  assert.ok(verdict.confidence >= 0.6, String(verdict.confidence), 'must clear the default llmMinConfidence');
+});
+
+test('NLI judge is not diluted by noisy search rows and never blocks on mixed evidence', async () => {
+  // Rows are ranked poorly on purpose; trimming the weakest one lets the on-target rows decide.
+  const rows = [
+    { title: 'Antigravity docs', snippet: 'an AI coding IDE from Google', relevance: 0.9 },
+    { title: 'Google Antigravity', snippet: 'agent-first development environment', relevance: 0.85 },
+    { title: 'Building agents with Antigravity', snippet: 'tutorial', relevance: 0.8 },
+    { title: 'Antigravity (physics)', snippet: 'hypothetical force opposing gravity', relevance: 0.15 },
+  ];
+  const p = { 0: 0.6 }; // title alone is ambiguous
+  const judge = new NliJudgeAdapter(async (premise) => {
+    if (premise.startsWith('A web page')) return p[0];
+    return /physics|opposing gravity/i.test(premise) ? 0.05 : 0.92;
+  });
+  const payload = { goal: 'learn to build AI agents', page: { title: 'Google Antigravity', domain: 'antigravity.google' }, hints: { titleIsGeneric: true, hasWebContext: true }, webContext: rows };
+  const verdict = parseLlmResponse(await judge.complete(buildMessages(payload)));
+  assert.equal(verdict.classification, 'relevant');
+  assert.ok(verdict.confidence >= 0.6, String(verdict.confidence));
+});
+
+test('NLI judge downgrades a noisy *block* to questionable instead of blocking', async () => {
+  // Average is below the irrelevant bar thanks to one junk row, but another row clearly
+  // supports the goal: the page must not be blocked on that basis.
+  const rows = [
+    { title: 'USACO Guide', snippet: 'competitive programming training', relevance: 0.5 },
+    { title: 'Random forum thread', snippet: 'off topic chatter', relevance: 0.2 },
+    { title: 'Another off-topic hit', snippet: 'news', relevance: 0.2 },
+    { title: 'Third off-topic hit', snippet: 'sports', relevance: 0.2 },
+    { title: 'Fourth off-topic hit', snippet: 'shopping', relevance: 0.2 },
+  ];
+  const judge = new NliJudgeAdapter(async (premise) => (/competitive programming/i.test(premise) ? 0.9 : /A web page/.test(premise) ? 0.1 : 0.02));
+  const payload = { goal: 'practice algorithms', page: { title: 'USACO Guide', domain: 'usaco.guide' }, hints: { titleIsGeneric: false, hasWebContext: true }, webContext: rows };
+  const verdict = parseLlmResponse(await judge.complete(buildMessages(payload)));
+  assert.equal(verdict.classification, 'questionable');
+  assert.match(verdict.reason, /mixed/i);
+  assert.deepEqual(verdict.evidence, []);
+});
+
+test('NLI confidence is calibrated against the thresholds, not the undecided middle', async () => {
+  const at = async (score) => {
+    const judge = new NliJudgeAdapter(async () => score);
+    return parseLlmResponse(await judge.complete(buildMessages({ goal: 'Study OS', page: { title: 'Virtual memory lecture' }, hints: { titleIsGeneric: false, hasWebContext: false } })));
+  };
+  // A verdict exactly at its threshold reports 0.6 — the default llmMinConfidence — so a real
+  // hit is no longer downgraded to questionable by the evidence policy.
+  assert.equal((await at(0.7)).confidence, 0.6);
+  assert.equal((await at(0.7)).classification, 'relevant');
+  assert.equal((await at(0.95)).confidence, 0.93);
+  assert.equal((await at(0.3)).confidence, 0.6);
+  assert.equal((await at(0.3)).classification, 'irrelevant');
+  assert.equal((await at(0)).confidence, 1);
+  assert.equal((await at(0.5)).confidence, 0);
+  const nearMiss = await at(0.68);
+  assert.equal(nearMiss.classification, 'questionable');
+  assert.ok(nearMiss.confidence > 0 && nearMiss.confidence < 0.5, String(nearMiss.confidence));
 });
 
 test('NLI judge refuses to verdict a generic title that has no context (safe bias)', async () => {

@@ -89,27 +89,48 @@ export class NliJudgeAdapter extends LocalLLM {
     const hypothesis = `This page is about ${goalTopicPhrase(payload.goal) || payload.goal}.`;
 
     const scored = [{ text: payload.page.title, premise: titlePremise(payload.page, payload.hints?.pageKind), kind: 'title' }];
-    for (const r of payload.webContext ?? []) scored.push({ text: r.title, premise: contextPremise(r), kind: 'context' });
+    for (const r of payload.webContext ?? []) scored.push({ text: r.title, premise: contextPremise(r), kind: 'context', weight: rowWeight(r) });
     for (const item of scored) item.p = clamp01(await this.entail(item.premise, hypothesis));
 
     // Web context, when present, describes the page better than a bare title: weight it 2:1.
+    // Rows are weighted by how well the search ranked them for *this* page, so a row about a
+    // different page with a similar name cannot cancel out the rows that are on target.
     const context = scored.filter((s) => s.kind === 'context');
     const titleP = scored[0].p;
-    const contextP = context.length ? context.reduce((a, s) => a + s.p, 0) / context.length : null;
+    // Trim the single most contradictory row when there are enough rows to spare. Search
+    // routinely returns a *different* page that shares the name ("Antigravity (physics)" for
+    // "Google Antigravity"), it ranks well by title similarity, and one such row used to cancel
+    // out every on-target row. Trimmed means are the standard defence; the dilution guard below
+    // keeps the safe side of it.
+    const usable = context.length >= 3 ? dropWeakest(context) : context;
+    const contextP = usable.length ? weightedMean(usable) : null;
     const p = contextP === null ? titleP : (2 * contextP + titleP) / 3;
+    // Best single row: the strongest evidence that the page *is* about the goal.
+    const support = context.length ? Math.max(...context.map((s) => s.p)) : titleP;
 
     let classification = 'questionable';
+    let diluted = false;
     if (p >= this.thresholds.relevant) classification = 'relevant';
-    else if (p <= this.thresholds.irrelevant) classification = 'irrelevant';
-    // Confidence = how far the entailment probability sits from the undecided middle (0.5).
-    const confidence = round2(Math.min(1, Math.abs(p - 0.5) * 2));
+    else if (p <= this.thresholds.irrelevant) {
+      // Dilution guard: a low average means the context is noisy, not that the page is
+      // off-goal. If any supplied row actually supports the goal, do not block the page.
+      if (support >= this.thresholds.relevant) {
+        classification = 'questionable';
+        diluted = true;
+      } else {
+        classification = 'irrelevant';
+      }
+    }
+    const confidence = confidenceFor(classification, p, this.thresholds);
     const evidence = classification === 'questionable' ? [] : scored.filter((s) => (classification === 'relevant' ? s.p >= this.thresholds.relevant : s.p <= this.thresholds.irrelevant)).map((s) => s.text).slice(0, 3);
     const reason = classification === 'relevant'
       ? `Page context entails the goal (${Math.round(p * 100)}% entailment).`
       : classification === 'irrelevant'
         ? `Page context does not entail the goal (${Math.round(p * 100)}% entailment).`
-        : `Entailment is undecided (${Math.round(p * 100)}%).`;
-    return JSON.stringify({ classification, confidence, reason, evidence, entailment: round2(p) });
+        : diluted
+          ? `Context is mixed: the average is ${Math.round(p * 100)}% but one source reaches ${Math.round(support * 100)}% entailment, so the page is left questionable.`
+          : `Entailment is undecided (${Math.round(p * 100)}%).`;
+    return JSON.stringify({ classification, confidence, reason, evidence, entailment: round2(p), support: round2(support) });
   }
 
   async dispose() {
@@ -136,6 +157,47 @@ export async function loadNliJudge({ transformersUrl, wasmUrl, modelId = NLI_MOD
     return softmax(row)[idx];
   };
   return new NliJudgeAdapter(entail, { modelVersion: `${modelId}@q8`, dispose: () => classifier.dispose?.() });
+}
+
+/**
+ * Search rows are not equally trustworthy: `relevance` is how well the row matched this page
+ * (embedding cosine, or lexical overlap as a fallback). Weight it rather than trusting it
+ * absolutely — a good row can still rank poorly, and a bad row can rank well.
+ */
+function rowWeight(row) {
+  const rel = Number(row?.relevance);
+  const base = Number.isFinite(rel) ? Math.min(1, Math.max(0, rel)) : 0.5;
+  return 0.3 + 0.7 * base;
+}
+
+/** Rows except the one with the lowest entailment (ties: the first). */
+function dropWeakest(rows) {
+  let worst = 0;
+  for (let i = 1; i < rows.length; i++) if (rows[i].p < rows[worst].p) worst = i;
+  return rows.filter((_, i) => i !== worst);
+}
+
+function weightedMean(rows) {
+  const total = rows.reduce((a, s) => a + s.weight, 0);
+  if (total <= 0) return rows.reduce((a, s) => a + s.p, 0) / rows.length;
+  return rows.reduce((a, s) => a + s.p * s.weight, 0) / total;
+}
+
+/**
+ * Confidence in [0,1], expressed against the decision thresholds rather than against the
+ * undecided middle: a verdict at exactly its threshold is 0.6 (which is the default
+ * `llmMinConfidence`), and it rises to 1 as the entailment moves away from the boundary.
+ *
+ * The old formula (`|p − 0.5|·2`) reported 0.4 for a page at the "relevant" threshold 0.7,
+ * so genuine hits were quietly downgraded to *questionable* by the evidence policy.
+ */
+export function confidenceFor(classification, p, thresholds = NLI_THRESHOLDS) {
+  if (classification === 'relevant') return round2(0.6 + 0.4 * clamp01((p - thresholds.relevant) / Math.max(1e-6, 1 - thresholds.relevant)));
+  if (classification === 'irrelevant') return round2(0.6 + 0.4 * clamp01((thresholds.irrelevant - p) / Math.max(1e-6, thresholds.irrelevant)));
+  // Questionable: how close the entailment came to a decision (0 in the middle of the band).
+  const band = Math.max(1e-6, (thresholds.relevant - thresholds.irrelevant) / 2);
+  const distance = Math.min(Math.abs(p - thresholds.relevant), Math.abs(p - thresholds.irrelevant));
+  return round2(0.45 * clamp01(1 - distance / band));
 }
 
 /**
@@ -229,10 +291,11 @@ export async function loadTransformersJsLLM({ transformersUrl, wasmUrl, modelId 
 // ---- Ollama (localhost) ------------------------------------------------------------------------
 
 export class OllamaAdapter extends LocalLLM {
-  constructor({ endpoint = 'http://localhost:11434', model = 'qwen3:0.6b', fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
+  constructor({ endpoint = 'http://localhost:11434', model = 'qwen3:0.6b', contextLength = 4096, fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
     super();
     this.endpoint = endpoint.replace(/\/$/, '');
     this.model = model;
+    this.contextLength = contextLength;
     this.fetchImpl = fetchImpl;
     assertLocal(this.endpoint);
   }
@@ -245,7 +308,9 @@ export class OllamaAdapter extends LocalLLM {
     const res = await this.fetchImpl(`${this.endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.model, messages, stream: false, format: 'json', options: { temperature: 0, num_predict: maxNewTokens } }),
+      // num_ctx is explicit: the primed prompt is ~2k tokens and several Ollama builds default
+      // to 2048, which would silently truncate the instructions before the payload.
+      body: JSON.stringify({ model: this.model, messages, stream: false, format: 'json', options: { temperature: 0, num_predict: maxNewTokens, num_ctx: this.contextLength } }),
       signal,
     });
     if (!res.ok) throw new Error(`Ollama responded ${res.status}`);

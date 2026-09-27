@@ -46,6 +46,8 @@ async function load() {
   $('llmEndpoint').value = s.llmEndpoint ?? '';
   $('llmModelName').value = s.llmModelName ?? '';
   $('llmMinConfidence').value = s.llmMinConfidence;
+  $('llmTimeoutMs').value = s.llmTimeoutMs ?? 45000;
+  $('llmSecondOpinion').checked = s.llmSecondOpinion !== false;
   $('llmContextNotes').value = s.llmContextNotes ?? '';
   updateContextNotesCount();
   $('debugMode').checked = Boolean(s.debugMode);
@@ -207,6 +209,8 @@ async function save() {
     llmEndpoint: $('llmEndpoint').value.trim(),
     llmModelName: $('llmModelName').value.trim(),
     llmMinConfidence: Number($('llmMinConfidence').value),
+    llmSecondOpinion: $('llmSecondOpinion').checked,
+    llmTimeoutMs: Number($('llmTimeoutMs').value),
     llmContextNotes: sanitizeExtraContext($('llmContextNotes').value),
     debugMode: $('debugMode').checked,
     allowedDomains: state.settings.allowedDomains,

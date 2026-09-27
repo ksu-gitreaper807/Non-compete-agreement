@@ -25,6 +25,10 @@ class StubEmbedding extends Classifier {
 }
 
 const fixtures = {
+  'usaco guide usaco.org': [
+    { title: 'USACO Guide — free competitive programming lessons', domain: 'usaco.guide', snippet: 'Bronze to Platinum training modules, practice problems and contest preparation' },
+    { title: 'USACO Training Program', domain: 'usaco.org', snippet: 'training pages and problem sets for competitive programming' },
+  ],
   'building better systems': [
     { title: 'Building Better Systems — distributed systems talk', domain: 'infoq.com', snippet: 'distributed systems and software architecture' },
     { title: 'Building Better Systems', domain: 'youtube.com', snippet: 'software architecture video' },
@@ -47,7 +51,7 @@ function make({ embeddingMap = {}, embeddingFail = false, llm = null, provider =
 
 test('obviously relevant/irrelevant pages never reach search or LLM', async () => {
   const llm = llmAnswering(() => { throw new Error('should not be called'); });
-  const { pipeline, provider, ctx } = make({ embeddingMap: { 'Best Gaming PCs of 2026': { c: 'irrelevant', s: 0.1 } }, llm, settings: { llmEnabled: true, searchEnabled: true, searchMode: 'uncertain' } });
+  const { pipeline, provider, ctx } = make({ embeddingMap: { 'Best Gaming PCs of 2026': { c: 'irrelevant', s: 0.1 } }, llm, settings: { llmEnabled: true, searchEnabled: true, searchMode: 'uncertain', llmSecondOpinion: false } });
   const rel = await pipeline.classify(ctx('Operating Systems: Three Easy Pieces'));
   assert.equal(rel.source, 'auto:allow');
   assert.equal(rel.sourceKind, 'regex');
@@ -57,6 +61,45 @@ test('obviously relevant/irrelevant pages never reach search or LLM', async () =
   assert.equal(irr.searchUsed, false);
   assert.equal(provider.calls.length, 0);
   assert.ok(typeof irr.timings.totalMs === 'number');
+});
+
+test('second opinion: a confident block is re-examined by the judge instead of standing', async () => {
+  // The page title shares no vocabulary with the goal, so the embedding layer is confidently
+  // wrong about it — the classic "antigravity.google / usaco.org" false block.
+  const seen = [];
+  const llm = llmAnswering((payload) => { seen.push(payload); return JSON.stringify({ classification: 'relevant', confidence: 0.8, reason: 'It is an on-goal training site.', evidence: ['training'] }); });
+  const map = { 'USACO Guide': { c: 'irrelevant', s: 0.1 } };
+  const { pipeline, provider, ctx } = make({ embeddingMap: map, llm, settings: { llmEnabled: true, searchEnabled: true, searchMode: 'ambiguous', llmSecondOpinion: true } });
+  const r = await pipeline.classify(ctx('USACO Guide', 'usaco.org'));
+  assert.equal(seen.length, 1, 'the judge is asked even though the embedding layer was confident');
+  assert.equal(r.classification, 'relevant', 'the block is lifted');
+  assert.equal(r.sourceKind, 'local_llm');
+  assert.equal(r.searchUsed, true, 'a second opinion always looks for evidence, even in "ambiguous" mode');
+  assert.equal(provider.calls[0], 'USACO Guide usaco.org');
+  assert.equal(seen[0].hints.semanticVerdict, 'leans-distraction', 'the judge is told what the embeddings thought');
+});
+
+test('second opinion with nothing to go on is inconclusive: the block stands', async () => {
+  // Generic title, search enabled but empty → no evidence → the review must not quietly unblock.
+  const llm = llmAnswering(() => JSON.stringify({ classification: 'questionable', confidence: 0, reason: 'Cannot tell.', evidence: [] }));
+  const { pipeline, ctx } = make({ embeddingMap: { Home: { c: 'irrelevant', s: 0.1 } }, llm, settings: { llmEnabled: true, searchEnabled: true, llmSecondOpinion: true } });
+  const r = await pipeline.classify(ctx('Home', 'youtube.com'));
+  assert.equal(r.classification, 'irrelevant');
+  assert.equal(r.sourceKind, 'embedding');
+  assert.equal(r.reviewed, true);
+  assert.equal(r.reviewInconclusive, true);
+});
+
+test('second opinion off keeps the old behaviour; a failed judgment leaves the block standing', async () => {
+  const off = make({ embeddingMap: { 'USACO Guide': { c: 'irrelevant', s: 0.1 } }, llm: llmAnswering(() => { throw new Error('unreachable'); }), settings: { llmEnabled: true, llmSecondOpinion: false } });
+  const blocked = await off.pipeline.classify(off.ctx('USACO Guide', 'usaco.org'));
+  assert.equal(blocked.classification, 'irrelevant');
+  assert.equal(blocked.sourceKind, 'embedding');
+
+  const broken = make({ embeddingMap: { 'USACO Guide': { c: 'irrelevant', s: 0.1 } }, llm: llmAnswering(() => 'not json at all'), settings: { llmEnabled: true, llmSecondOpinion: true } });
+  const stillBlocked = await broken.pipeline.classify(broken.ctx('USACO Guide', 'usaco.org'));
+  assert.equal(stillBlocked.classification, 'irrelevant', 'an unusable judgment must not silently unblock');
+  assert.equal(stillBlocked.reviewed, true);
 });
 
 test('explicit user rules win over every AI layer', async () => {

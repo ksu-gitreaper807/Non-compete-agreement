@@ -75,9 +75,10 @@ export const INPUT_GUIDE = [
   '  because a short or boilerplate title lands near the middle regardless of the page.',
   '- hints: facts already computed about this page (for example whether the title carries too',
   '  little information to judge). Trust these over your own impression of the title.',
-  '- webContext: up to five search-result rows (title, domain, snippet) retrieved for the page',
-  '  title. They describe the page, but a row can also be about a different page with a similar',
-  '  name — weigh the rows, do not assume they are all correct.',
+  '- webContext: up to five search-result rows (title, domain, snippet, relevance) retrieved for',
+  '  the page title. `relevance` in [0,1] is how well that row matched the page: a low number',
+  '  means the row is probably about a different page with a similar name. Weigh the rows',
+  '  accordingly, and do not let one weak row outweigh several strong ones.',
 ].join('\n');
 
 export const TRAPS = [

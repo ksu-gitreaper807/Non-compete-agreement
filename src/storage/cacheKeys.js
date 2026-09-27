@@ -25,6 +25,7 @@ export function classificationConfigFingerprint({ settings, rules, anchors, mode
       Boolean(settings?.searchEnabled),
       settings?.searchMode ?? '',
       settings?.llmRuntime ?? '',
+      Boolean(settings?.llmSecondOpinion),
       settings?.llmContextNotes ?? '',
       settings?.allowedDomains ?? [],
       settings?.blockedDomains ?? [],

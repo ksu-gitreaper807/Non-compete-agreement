@@ -31,7 +31,7 @@ export class LatencyStat {
 export class PipelineTelemetry {
   constructor() {
     this.stages = { regex: new LatencyStat(), embedding: new LatencyStat(), search: new LatencyStat(), llm: new LatencyStat(), total: new LatencyStat() };
-    this.counters = { classifications: 0, cacheHits: 0, searches: 0, searchCacheHits: 0, llmCalls: 0, llmCacheHits: 0, downgraded: 0, stale: 0 };
+    this.counters = { classifications: 0, cacheHits: 0, searches: 0, searchCacheHits: 0, llmCalls: 0, llmCacheHits: 0, downgraded: 0, stale: 0, secondOpinions: 0 };
     this.bySource = {};
   }
 
