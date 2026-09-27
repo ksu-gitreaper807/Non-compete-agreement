@@ -29,6 +29,7 @@ import { RateLimiter } from '../src/search/rateLimiter.js';
 import { LlmManager } from '../src/llm/llmManager.js';
 import { LlmClassifier } from '../src/llm/llmClassifier.js';
 import { OllamaAdapter, LlamaCppAdapter, NliJudgeAdapter } from '../src/llm/localLLM.js';
+import { parsePayload } from '../src/llm/promptBuilder.js';
 import { PersistentCache } from '../src/storage/cacheStore.js';
 import { informativeWords } from '../src/search/queryBuilder.js';
 
@@ -135,7 +136,7 @@ function createLlm() {
   return {
     modelVersion: 'mock-llm',
     async complete(messages) {
-      const payload = JSON.parse(messages[1].content);
+      const payload = parsePayload(messages);
       const goalWords = new Set(informativeWords(payload.goal).concat(['kernel', 'linux', 'scheduling', 'process', 'processes', 'memory', 'systems', 'concurrency', 'compiler']));
       const ctx = (payload.webContext ?? []).map((r) => `${r.title} ${r.snippet ?? ''}`).join(' ').toLowerCase();
       const hasContext = ctx.trim().length > 0;

@@ -1,3 +1,6 @@
+import { sanitizeExtraContext, MAX_EXTRA_CONTEXT } from '../src/llm/promptContext.js';
+import { buildLlmPayload, buildMessages } from '../src/llm/promptBuilder.js';
+
 const api = globalThis.browser ?? globalThis.chrome;
 const $ = (id) => document.getElementById(id);
 const send = (type, payload) => api.runtime.sendMessage({ type, payload });
@@ -43,6 +46,8 @@ async function load() {
   $('llmEndpoint').value = s.llmEndpoint ?? '';
   $('llmModelName').value = s.llmModelName ?? '';
   $('llmMinConfidence').value = s.llmMinConfidence;
+  $('llmContextNotes').value = s.llmContextNotes ?? '';
+  updateContextNotesCount();
   $('debugMode').checked = Boolean(s.debugMode);
   $('anchorsPositive').value = state.anchors.positive.join('\n');
   $('anchorsNegative').value = state.anchors.negative.join('\n');
@@ -202,6 +207,7 @@ async function save() {
     llmEndpoint: $('llmEndpoint').value.trim(),
     llmModelName: $('llmModelName').value.trim(),
     llmMinConfidence: Number($('llmMinConfidence').value),
+    llmContextNotes: sanitizeExtraContext($('llmContextNotes').value),
     debugMode: $('debugMode').checked,
     allowedDomains: state.settings.allowedDomains,
     blockedDomains: state.settings.blockedDomains,
@@ -227,6 +233,13 @@ async function save() {
   $('saveStatus').textContent = 'Saved.';
   await load();
   setTimeout(() => ($('saveStatus').textContent = ''), 2000);
+}
+
+function updateContextNotesCount() {
+  const el = $('llmContextNotes');
+  const n = sanitizeExtraContext(el.value).length;
+  const p = $('llmContextNotesCount');
+  if (p) p.textContent = `${n} / ${MAX_EXTRA_CONTEXT} characters${n >= MAX_EXTRA_CONTEXT ? ' (limit reached)' : ''}`;
 }
 
 function lines(text) {
@@ -268,6 +281,14 @@ async function refreshGrants() {
   }
 }
 
+$('llmContextNotes').addEventListener('input', updateContextNotesCount);
+$('previewPrompt').addEventListener('click', () => {
+  const extra = sanitizeExtraContext($('llmContextNotes').value);
+  const title = $('tryTitle').value.trim() || 'Linus Torvalds Interview';
+  const payload = buildLlmPayload({ goal: state.settings?.weeklyGoal || 'your weekly goal', title, domain: 'example.com' });
+  const preview = buildMessages(payload, { extraContext: extra });
+  $('promptPreview').textContent = preview.map((m) => `[${m.role}]\n${m.content}`).join('\n\n');
+});
 $('save').addEventListener('click', save);
 $('regenerateAnchors').addEventListener('click', async () => {
   await send('saveSettings', { weeklyGoal: $('weeklyGoal').value.trim() });

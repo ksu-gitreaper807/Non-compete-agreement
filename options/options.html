@@ -175,6 +175,15 @@
         <label>Minimum LLM confidence <input id="llmMinConfidence" type="number" min="0" max="1" step="0.05" /></label>
       </div>
       <p class="help">Verdicts below the minimum confidence, or without any usable evidence about the page, are downgraded to <em>questionable</em>. The recommended NLI judge is a tiny entailment model that scores "this page is about &lt;goal&gt;" against the title and web context — fast, no free text, no hallucination. In-browser runtimes download weights from Hugging Face once (Firefox will ask for permission); Ollama/llama.cpp let you run Qwen3-0.6B or any other local model.</p>
+      <label for="llmContextNotes">Extra context for the AI judge <span class="help">(optional, ≤1000 characters — sent to the local model with every judgment)</span>
+        <textarea id="llmContextNotes" rows="5" maxlength="1000" placeholder="e.g. I am preparing for the GATE CS exam. Coursera, NPTEL and lecture videos on YouTube count as on-goal. Anything about competitive programming is a distraction this week."></textarea>
+      </label>
+      <p id="llmContextNotesCount" class="help"></p>
+      <p class="help">The judge is already primed with what GoalGuard is, what its verdicts do, and the traps that cause wrong verdicts (judge the content, not the platform; a generic title is not evidence; when unsure answer <em>questionable</em>). Add anything specific to <em>your</em> goal here — what counts as progress, which sources are on-goal, which lookalikes are not. This text overrides the built-in guidance where they disagree, and saved verdicts are re-judged when you change it.</p>
+      <div class="row">
+        <button id="previewPrompt" type="button">Show the prompt the judge will receive</button>
+      </div>
+      <pre id="promptPreview"></pre>
       <p id="layer3Info">Status: —</p>
       <div class="row">
         <button id="warmUpLlm" type="button">Download &amp; load LLM now</button>

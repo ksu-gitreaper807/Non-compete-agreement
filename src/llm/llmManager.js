@@ -100,10 +100,11 @@ export class LlmManager {
   /**
    * Run one completion for a structured payload; identical concurrent payloads share a call.
    * @param {import('./promptBuilder.js').LlmPayload} payload
+   * @param {{ extraContext?: string }} [options]  user notes appended to the system prompt
    * @returns {Promise<{ raw: string, latencyMs: number }>}
    */
-  async complete(payload) {
-    const messages = buildMessages(payload);
+  async complete(payload, { extraContext = '' } = {}) {
+    const messages = buildMessages(payload, { extraContext });
     const key = hashString(JSON.stringify(messages));
     if (this.inFlight.has(key)) {
       this.stats.dedupeHits++;

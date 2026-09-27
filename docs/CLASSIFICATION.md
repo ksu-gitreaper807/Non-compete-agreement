@@ -142,16 +142,44 @@ Gate: `settings.llmEnabled` ∧ Layer 2 not confident (or unavailable) ∧ runti
 cool-down.
 
 * **Payload** (`promptBuilder.buildLlmPayload`): `{goal, page: {title, domain}, semantic:
-  {goalSimilarity, positiveSimilarity, negativeSimilarity}, webContext: ≤5 × {title, domain,
-  snippet}}`. Nothing else — no URL, no history, no other tabs.
-* **Prompt** (`SYSTEM_PROMPT`): relevance-to-goal only, use supplied information only, answer
-  `questionable` when the context does not establish what the page is about, return only JSON.
+  {goalSimilarity, positiveSimilarity, negativeSimilarity}, hints: {titleIsGeneric,
+  hasWebContext, pageKind, semanticVerdict}, webContext: ≤5 × {title, domain, snippet}}`.
+  Nothing else — no URL, no history, no other tabs. `hints` carries what the model cannot
+  compute from a raw string: whether the title is generic (same predicate as
+  `queryBuilder.isGenericTitle`), whether any web context exists, a coarse page kind derived
+  from the domain/title only (`video | forum | docs | paper | code | reference | blog | social |
+  shopping | news | course | home | unknown`), and which way the embedding layer leaned
+  (`leans-relevant | leans-distraction | undecided | unavailable`).
+* **Context priming** (`promptContext.buildSystemPrompt`, version `PROMPT_CONTEXT_VERSION`,
+  appended last: any `settings.llmContextNotes` typed by the user in Options, ≤1000 chars, as
+  authoritative). The primer is not decoration — it is what stops the model guessing:
+  1. *what GoalGuard is and what the verdict does*: `irrelevant` blocks the page behind a wait,
+     `questionable` warns, `relevant` opens — and this layer is only reached when the cheaper
+     layers already abstained;
+  2. *label definitions* in the extension's terms (study material, docs, tutorials, papers,
+     tooling and focused Q&A about the goal are all `relevant`);
+  3. *how to read every field*, including "the similarity numbers are weak hints, not evidence";
+  4. *the traps* — platform stereotyping, generic titles as false evidence, incidental word
+     overlap, study material not counting as work, adjacent-but-not-goal topics, and goal scope;
+  5. *calibration*: a wrong block costs more than a missed distraction, so thin/mixed/absent
+     evidence → `questionable`;
+  6. the strict JSON output contract.
+* **Messages** (`promptBuilder.buildMessages`): `[system, …3 example pairs, user payload]`. The
+  worked examples (generic title resolved by context / generic title with no context / clearly
+  off-goal page) are for chat runtimes; the NLI judge reads the payload via `parsePayload()`,
+  which scans backwards so examples can never shadow the real page.
 * **Runtime** (`localLLM.js`): `LocalLLM.complete(messages)` → verdict JSON string.
-  *Default `NliJudgeAdapter`* (`Xenova/nli-deberta-v3-xsmall`, int8 ≈70 MB): hypothesis
-  `"This page is about <goal>."`; premises = `title (domain)` and each `title: snippet` context
-  row; `p = contextAvg·2/3 + title·1/3` (title only when no context); `p ≥ 0.7` → relevant,
-  `p ≤ 0.3` → irrelevant, else questionable; `confidence = |p − 0.5|·2`; evidence = the rows
-  that crossed the threshold (so it is grounded by construction). Optional generative adapters:
+  *Default `NliJudgeAdapter`* (`Xenova/nli-deberta-v3-xsmall`, int8 ≈70 MB): the hypothesis is
+  built from the goal **reduced to a topic phrase** (`goalTopicPhrase`: "Study operating systems
+  and C++" → *"This page is about operating systems, C++."*) because the cross-encoder scores
+  declarative statements, not imperatives. Premises are framed as descriptions rather than raw
+  strings — the page itself as `A web page the user has open. Its title is: … It is on the site
+  … It is a video page.` and each context row as `A web search about this page returned a result
+  titled "…". That result says: …`. `p = contextAvg·2/3 + title·1/3` (title only when no
+  context); `p ≥ 0.7` → relevant, `p ≤ 0.3` → irrelevant, else questionable;
+  `confidence = |p − 0.5|·2`; evidence = the rows that crossed the threshold (so it is grounded
+  by construction). A generic title that arrives with **no** web context short-circuits to
+  `questionable` with confidence 0 — trap 2 enforced in code, and it saves the inference. Optional generative adapters:
   in-extension Transformers.js (Qwen2.5-0.5B, greedy, ≤120 new tokens), Ollama (`/api/chat`, `format: json`) and llama.cpp
   server (`/v1/chat/completions`, `response_format: json_object`). Non-localhost endpoints throw
   at construction. `LlmManager` adds lazy load with progress, 30 s timeout, per-prompt in-flight
@@ -162,8 +190,11 @@ cool-down.
   verbatim (case-insensitive) in the payload text, otherwise moved to `unsupportedEvidence`.
   Anything else → `null` → embedding verdict stands (not cached, so a flaky answer is retried
   next time).
-* **Cache** (`llm:v1:<model>:<hash(goal, title, domain, context digest)>`, 7 days, 1000): new
-  web context ⇒ new key.
+* **Cache** (`llm:v2:<model>:<hash(prompt version|goal, title, domain, context digest)>`, 7 days,
+  1000): new web context ⇒ new key. The `promptFingerprint` (`ctx1` + hash of the user's context
+  notes) is part of the identity, so editing the primer or the notes re-judges pages instead of
+  replaying verdicts produced under different instructions. The final-classification cache
+  fingerprint includes `llmContextNotes` for the same reason.
 
 ### Evidence-aware finalisation (`decisionPipeline.applyEvidencePolicy`)
 

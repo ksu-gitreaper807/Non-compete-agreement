@@ -8,6 +8,7 @@
  */
 import { Classifier, makeResult } from '../classifier/classifier.js';
 import { buildLlmPayload, payloadText } from './promptBuilder.js';
+import { promptFingerprint, sanitizeExtraContext } from './promptContext.js';
 import { parseLlmResponse } from './responseParser.js';
 import { llmKey } from '../storage/cacheKeys.js';
 import { PersistentCache } from '../storage/cacheStore.js';
@@ -45,9 +46,12 @@ export class LlmClassifier extends Classifier {
       semantic: previous ? { goalSimilarity: previous.goalSimilarity, positiveSimilarity: previous.positiveSimilarity, negativeSimilarity: previous.negativeSimilarity } : null,
       webContext,
     });
-    const key = llmKey({ modelVersion: this.llm.modelVersion, goal, title: text, domain, contextVersion: contextVersion(webContext) });
+    // The user's own notes change the instructions, so they change the cache identity too.
+    const extraContext = sanitizeExtraContext(settings?.llmContextNotes);
+    const promptVersion = promptFingerprint(extraContext);
+    const key = llmKey({ modelVersion: this.llm.modelVersion, promptVersion, goal, title: text, domain, contextVersion: contextVersion(webContext) });
 
-    const { value: verdict, cached } = await this.cache.getOrCompute(key, () => this.judge(payload));
+    const { value: verdict, cached } = await this.cache.getOrCompute(key, () => this.judge(payload, { extraContext }));
     if (!verdict) return null;
     if (cached) this.stats.cacheHits++;
 
@@ -60,17 +64,17 @@ export class LlmClassifier extends Classifier {
       nearestPositive: previous?.nearestPositive ?? null,
       nearestNegative: previous?.nearestNegative ?? null,
       confidence: verdict.confidence,
-      llm: { ...verdict, model: this.llm.modelVersion, cached, latencyMs: cached ? 0 : verdict.latencyMs },
+      llm: { ...verdict, model: this.llm.modelVersion, promptVersion, cached, latencyMs: cached ? 0 : verdict.latencyMs },
       confident: true,
     });
   }
 
   /** One generation + strict parse. Returns null (not cached) on invalid output. */
-  async judge(payload) {
+  async judge(payload, { extraContext = '' } = {}) {
     let raw;
     let latencyMs = 0;
     try {
-      ({ raw, latencyMs } = await this.llm.complete(payload));
+      ({ raw, latencyMs } = await this.llm.complete(payload, { extraContext }));
     } catch (e) {
       this.stats.failures++;
       throw e;

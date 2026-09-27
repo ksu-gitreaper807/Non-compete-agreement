@@ -9,6 +9,7 @@ import {
   DEFAULT_ANCHORS,
   SCHEMA_VERSION,
 } from './schema.js';
+import { sanitizeExtraContext } from '../llm/promptContext.js';
 
 const storageArea = globalThis.browser?.storage?.local ?? globalThis.chrome?.storage?.local ?? null;
 let memoryFallback = createDefaultState();
@@ -102,6 +103,7 @@ function sanitizeSettings(patch) {
   if ('llmRuntime' in out && !['nli', 'transformers', 'ollama', 'llamacpp'].includes(out.llmRuntime)) out.llmRuntime = DEFAULT_SETTINGS.llmRuntime;
   if ('llmEndpoint' in out) out.llmEndpoint = String(out.llmEndpoint ?? '').trim().slice(0, 200);
   if ('llmModelName' in out) out.llmModelName = String(out.llmModelName ?? '').trim().slice(0, 100);
+  if ('llmContextNotes' in out) out.llmContextNotes = sanitizeExtraContext(out.llmContextNotes);
   if ('allowedDomains' in out) out.allowedDomains = cleanList(out.allowedDomains);
   if ('blockedDomains' in out) out.blockedDomains = cleanList(out.blockedDomains);
   return out;

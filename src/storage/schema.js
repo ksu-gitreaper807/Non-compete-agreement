@@ -70,6 +70,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   llmEndpoint: '',            // localhost URL for ollama/llamacpp; empty = adapter default
   llmModelName: '',           // model tag for ollama/llamacpp; empty = adapter default
   llmMinConfidence: 0.6,      // below this the LLM verdict is downgraded to questionable
+  llmContextNotes: '',        // user's own context for the judge, appended to the system prompt
   debugMode: false,           // show per-classification trace in the popup
 });
 

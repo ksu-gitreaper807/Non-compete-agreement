@@ -13,6 +13,9 @@
  * evidence policy do not care which one produced it.
  */
 
+import { parsePayload } from './promptBuilder.js';
+import { goalTopicPhrase } from './promptContext.js';
+
 export const NLI_MODEL_ID = 'Xenova/nli-deberta-v3-xsmall';
 export const NLI_MODEL_VERSION = `${NLI_MODEL_ID}@q8`;
 export const LLM_MODEL_ID = 'onnx-community/Qwen2.5-0.5B-Instruct';
@@ -67,11 +70,26 @@ export class NliJudgeAdapter extends LocalLLM {
   async complete(messages) {
     const payload = parsePayload(messages);
     if (!payload?.goal || !payload.page?.title) return JSON.stringify({ classification: 'questionable', confidence: 0, reason: 'No page information supplied.', evidence: [] });
-    const hypothesis = `This page is about ${payload.goal}.`;
-    const titlePremise = payload.page.domain ? `${payload.page.title} (${payload.page.domain})` : payload.page.title;
 
-    const scored = [{ text: payload.page.title, premise: titlePremise, kind: 'title' }];
-    for (const r of payload.webContext ?? []) scored.push({ text: r.title, premise: r.snippet ? `${r.title}: ${r.snippet}` : r.title, kind: 'context' });
+    // Trap 2 of the primer, enforced rather than hoped for: a title that carries no information
+    // and no web context cannot support any verdict. Answering questionable here also saves the
+    // inference, and the pipeline would downgrade the answer to questionable anyway.
+    if (payload.hints?.titleIsGeneric && !payload.hints?.hasWebContext) {
+      return JSON.stringify({
+        classification: 'questionable',
+        confidence: 0,
+        reason: 'The page title carries too little information and no web context was available.',
+        evidence: [],
+        entailment: null,
+      });
+    }
+
+    // Hypothesis in the model's own register: a declarative statement about a topic, not an
+    // imperative goal ("Study OS" → "This page is about operating systems.").
+    const hypothesis = `This page is about ${goalTopicPhrase(payload.goal) || payload.goal}.`;
+
+    const scored = [{ text: payload.page.title, premise: titlePremise(payload.page, payload.hints?.pageKind), kind: 'title' }];
+    for (const r of payload.webContext ?? []) scored.push({ text: r.title, premise: contextPremise(r), kind: 'context' });
     for (const item of scored) item.p = clamp01(await this.entail(item.premise, hypothesis));
 
     // Web context, when present, describes the page better than a bare title: weight it 2:1.
@@ -120,12 +138,25 @@ export async function loadNliJudge({ transformersUrl, wasmUrl, modelId = NLI_MOD
   return new NliJudgeAdapter(entail, { modelVersion: `${modelId}@q8`, dispose: () => classifier.dispose?.() });
 }
 
-function parsePayload(messages) {
-  try {
-    return JSON.parse(messages?.[1]?.content ?? messages?.[0]?.content ?? '{}');
-  } catch {
-    return null;
-  }
+/**
+ * Premise for the page itself. Framed as a description of the page rather than a bare string,
+ * because the NLI cross-encoder scores "premise entails hypothesis" — it needs to know that the
+ * text is a page title, not a topic of its own.
+ */
+function titlePremise(page, kind) {
+  const parts = ['A web page the user has open.'];
+  parts.push(`Its title is: ${page.title}.`);
+  if (page.domain) parts.push(`It is on the site ${page.domain}.`);
+  if (kind && kind !== 'unknown') parts.push(`It is a ${kind} page.`);
+  return parts.join(' ');
+}
+
+/** Premise for one search row: a description *about* the page, not a page of its own. */
+function contextPremise(row) {
+  const parts = [];
+  parts.push(`A web search about this page returned a result titled "${row.title}".`);
+  if (row.snippet) parts.push(`That result says: ${row.snippet}`);
+  return parts.join(' ');
 }
 
 function softmax(arr) {

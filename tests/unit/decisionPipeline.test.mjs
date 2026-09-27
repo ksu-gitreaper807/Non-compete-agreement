@@ -10,6 +10,7 @@ import { MockSearchProvider } from '../../src/search/searchProvider.js';
 import { RateLimiter } from '../../src/search/rateLimiter.js';
 import { PersistentCache } from '../../src/storage/cacheStore.js';
 import { DEFAULT_SETTINGS, DEFAULT_ANCHORS } from '../../src/storage/schema.js';
+import { parsePayload } from '../../src/llm/promptBuilder.js';
 
 class StubEmbedding extends Classifier {
   constructor(map, { fail = false } = {}) { super(); this.map = map; this.fail = fail; this.calls = 0; }
@@ -31,7 +32,7 @@ const fixtures = {
 };
 
 function llmAnswering(fn) {
-  return new LlmManager({ loader: async () => ({ complete: async (msgs) => fn(JSON.parse(msgs[1].content)) }), idleUnloadMs: 0 });
+  return new LlmManager({ loader: async () => ({ complete: async (msgs) => fn(parsePayload(msgs)) }), idleUnloadMs: 0 });
 }
 
 function make({ embeddingMap = {}, embeddingFail = false, llm = null, provider = new MockSearchProvider({ fixtures }), settings = {} } = {}) {
@@ -84,6 +85,11 @@ test('ambiguous title → search context → LLM → relevant with evidence', as
   assert.equal(r.semanticScore, 0.5);
   assert.deepEqual(seen[0].page, { title: 'Building Better Systems', domain: 'medium.com' });
   assert.ok(!('url' in seen[0].page));
+  // The judge is told what it cannot work out from the strings alone.
+  assert.equal(seen[0].hints.hasWebContext, true);
+  assert.equal(seen[0].hints.titleIsGeneric, false);
+  assert.equal(seen[0].hints.pageKind, 'blog');
+  assert.equal(seen[0].hints.semanticVerdict, 'undecided');
   assert.equal(seen[0].webContext.length, 2);
   assert.equal(provider.calls[0], 'Building Better Systems');
   assert.ok(r.trace.some((t) => t.stage === 'search' && t.results === 2));

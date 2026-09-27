@@ -7,7 +7,7 @@ import { hashString, normalizeTitleForKey } from '../utils/text.js';
 export const CLASSIFICATION_KEY_VERSION = 'v1';
 export const EMBEDDING_KEY_VERSION = 'v1';
 export const RETRIEVAL_KEY_VERSION = 'v2'; // v2: results carry url + relevance
-export const LLM_KEY_VERSION = 'v1';
+export const LLM_KEY_VERSION = 'v2'; // v2: prompt primer + user context are part of the identity
 
 /**
  * Fingerprint of everything a final classification depends on besides the page itself:
@@ -25,6 +25,7 @@ export function classificationConfigFingerprint({ settings, rules, anchors, mode
       Boolean(settings?.searchEnabled),
       settings?.searchMode ?? '',
       settings?.llmRuntime ?? '',
+      settings?.llmContextNotes ?? '',
       settings?.allowedDomains ?? [],
       settings?.blockedDomains ?? [],
       rules?.allow ?? [],
@@ -50,7 +51,12 @@ export function retrievalKey({ provider, query }) {
   return `ret:${RETRIEVAL_KEY_VERSION}:${provider}:${normalizeTitleForKey(query)}`;
 }
 
-/** `llm:v1:<model>:<hash(goal|title|domain|context)>` — one verdict per page *and* context. */
-export function llmKey({ modelVersion, goal, title, domain, contextVersion }) {
-  return `llm:${LLM_KEY_VERSION}:${modelVersion}:${hashString([goal, normalizeTitleForKey(title), (domain ?? '').toLowerCase(), contextVersion ?? ''].join('\u0000'))}`;
+/**
+ * `llm:v2:<model>:<hash(prompt-version|goal|title|domain|context)>` — one verdict per page,
+ * per context *and* per prompt. `promptVersion` folds in the primer version and the user's
+ * own notes (see promptContext.promptFingerprint), so editing them re-judges instead of
+ * replaying verdicts produced under different instructions.
+ */
+export function llmKey({ modelVersion, promptVersion = '', goal, title, domain, contextVersion }) {
+  return `llm:${LLM_KEY_VERSION}:${modelVersion}:${hashString([promptVersion, goal, normalizeTitleForKey(title), (domain ?? '').toLowerCase(), contextVersion ?? ''].join('\u0000'))}`;
 }

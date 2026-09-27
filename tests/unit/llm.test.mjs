@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLlmPayload, buildMessages, payloadText, SYSTEM_PROMPT } from '../../src/llm/promptBuilder.js';
+import { buildLlmPayload, buildMessages, payloadText, parsePayload, buildHints, guessPageKind, semanticVerdict, SYSTEM_PROMPT } from '../../src/llm/promptBuilder.js';
 import { parseLlmResponse, extractJson } from '../../src/llm/responseParser.js';
 import { LlmManager, LLM_STATUS } from '../../src/llm/llmManager.js';
 import { LlmClassifier } from '../../src/llm/llmClassifier.js';
@@ -12,7 +12,7 @@ const good = '{"classification":"relevant","confidence":0.87,"reason":"Discusses
 
 // ---- prompt -------------------------------------------------------------------------------------
 
-test('buildLlmPayload contains only goal, page, semantic numbers and trimmed web context', () => {
+test('buildLlmPayload contains only goal, page, semantic numbers, hints and trimmed web context', () => {
   const p = buildLlmPayload({
     goal: 'Study operating systems and C++',
     title: 'Building Better Systems',
@@ -20,16 +20,49 @@ test('buildLlmPayload contains only goal, page, semantic numbers and trimmed web
     semantic: { goalSimilarity: 0.5123, positiveSimilarity: 0.54, negativeSimilarity: 0.42 },
     webContext: Array.from({ length: 8 }, (_, i) => ({ title: `R${i}`, domain: 'd.com', snippet: 's', url: 'https://secret/url', relevance: 0.5 })),
   });
-  assert.deepEqual(Object.keys(p), ['goal', 'page', 'semantic', 'webContext']);
+  assert.deepEqual(Object.keys(p), ['goal', 'page', 'semantic', 'hints', 'webContext']);
   assert.equal(p.semantic.goalSimilarity, 0.51);
   assert.equal(p.webContext.length, 5);
   assert.deepEqual(Object.keys(p.webContext[0]), ['title', 'domain', 'snippet']);
   assert.ok(!JSON.stringify(p).includes('secret/url'));
+  assert.equal(p.hints.hasWebContext, true);
+  assert.equal(p.hints.titleIsGeneric, false);
   const msgs = buildMessages(p);
   assert.equal(msgs[0].content, SYSTEM_PROMPT);
   assert.match(SYSTEM_PROMPT, /Return ONLY valid JSON/);
   assert.match(SYSTEM_PROMPT, /Do not infer facts/);
   assert.ok(payloadText(p).includes('building better systems'));
+});
+
+test('hints state whether the title is informative, what the page looks like and which way semantics leaned', () => {
+  assert.equal(guessPageKind({ title: 'Episode 42', domain: 'youtube.com' }), 'video');
+  assert.equal(guessPageKind({ title: 'Home', domain: 'example.com' }), 'home');
+  assert.equal(guessPageKind({ title: 'malloc and free', domain: 'man7.org' }), 'docs');
+  assert.equal(guessPageKind({ title: 'A random post', domain: 'example.com' }), 'unknown');
+  assert.equal(semanticVerdict(null), 'unavailable');
+  assert.equal(semanticVerdict({ goalSimilarity: 0.7, negativeSimilarity: 0.3 }), 'leans-relevant');
+  assert.equal(semanticVerdict({ goalSimilarity: 0.2, negativeSimilarity: 0.6 }), 'leans-distraction');
+  assert.equal(semanticVerdict({ goalSimilarity: 0.5, negativeSimilarity: 0.48 }), 'undecided');
+  const hints = buildHints({ title: 'Episode 42', domain: 'youtube.com', semantic: null, webContext: [] });
+  assert.equal(hints.titleIsGeneric, true);
+  assert.equal(hints.hasWebContext, false);
+  assert.equal(hints.pageKind, 'video');
+  assert.equal(hints.semanticVerdict, 'unavailable');
+});
+
+test('messages carry few-shot examples and parsePayload recovers the real payload', () => {
+  const payload = { goal: 'Study OS', page: { title: 'Virtual memory lecture 3' } };
+  const msgs = buildMessages(payload);
+  assert.equal(msgs[0].role, 'system');
+  assert.equal(msgs.at(-1).role, 'user');
+  assert.ok(msgs.length >= 7, 'system + 3 example pairs + the real payload');
+  assert.deepEqual(parsePayload(msgs), payload, 'examples must not shadow the payload');
+  const bare = buildMessages(payload, { fewShot: false });
+  assert.equal(bare.length, 2);
+  assert.deepEqual(parsePayload(bare), payload);
+  assert.equal(parsePayload([{ role: 'user', content: 'not json' }]), null);
+  const withNotes = buildMessages(payload, { extraContext: 'extra notes' });
+  assert.match(withNotes[0].content, /extra notes/);
 });
 
 // ---- response parsing ---------------------------------------------------------------------------
@@ -150,6 +183,21 @@ test('LlmClassifier gates on settings/availability, returns structured verdict, 
   assert.equal(calls(), 2, 'different context → new judgment');
 });
 
+test('LlmClassifier passes the user context notes through and re-judges when they change', async () => {
+  const { manager, calls } = fakeLlm();
+  const c = new LlmClassifier({ llm: manager, cache: new PersistentCache('llm', { persist: false }) });
+  const notes = { ...settingsOn, llmContextNotes: 'Lectures and documentation count as on-goal.' };
+  const first = await c.classify({ ...base, settings: notes });
+  assert.equal(first.classification, 'relevant');
+  assert.match(first.llm.promptVersion, /^ctx1:/);
+  const again = await c.classify({ ...base, settings: notes });
+  assert.equal(again.llm.cached, true);
+  assert.equal(calls(), 1);
+  const changed = await c.classify({ ...base, settings: { ...settingsOn, llmContextNotes: 'Only peer-reviewed papers count.' } });
+  assert.equal(changed.llm.cached, false, 'different instructions must not reuse the verdict');
+  assert.equal(calls(), 2);
+});
+
 test('LlmClassifier: invalid JSON → null (not cached); runtime error → throws (pipeline skips it)', async () => {
   const { manager, calls } = fakeLlm((n) => (n === 1 ? 'I think it is relevant.' : good));
   const c = new LlmClassifier({ llm: manager, cache: new PersistentCache('llm', { persist: false }) });
@@ -187,6 +235,37 @@ test('NliJudgeAdapter maps entailment to strict verdict JSON with grounded evide
 
   assert.equal(parseLlmResponse(await judge.complete([{ role: 'system', content: 'x' }, { role: 'user', content: 'not json' }])).classification, 'questionable');
   assert.equal(judge.modelVersion, NLI_MODEL_VERSION);
+});
+
+test('NLI judge frames the premise as a page description and the hypothesis as a topic', async () => {
+  const seen = [];
+  const judge = new NliJudgeAdapter(async (premise, hypothesis) => {
+    seen.push({ premise, hypothesis });
+    return /kernel|operating/i.test(premise) ? 0.9 : 0.8;
+  });
+  const msgs = buildMessages({ goal: 'Study operating systems and C++', page: { title: 'Linus Torvalds Interview', domain: 'youtube.com' }, hints: { titleIsGeneric: false, hasWebContext: true, pageKind: 'video' }, webContext: [{ title: 'Kernel dev talk', snippet: 'linux kernel scheduling' }] });
+  const verdict = parseLlmResponse(await judge.complete(msgs));
+  assert.equal(verdict.classification, 'relevant');
+  // Hypothesis uses the topic phrase, not the imperative goal.
+  assert.equal(seen[0].hypothesis, 'This page is about operating systems, C++.');
+  for (const { hypothesis } of seen) assert.equal(hypothesis, seen[0].hypothesis);
+  // Premises describe the page rather than passing raw strings to the cross-encoder.
+  assert.match(seen[0].premise, /^A web page the user has open\./);
+  assert.match(seen[0].premise, /Its title is: Linus Torvalds Interview\./);
+  assert.match(seen[0].premise, /on the site youtube\.com/);
+  assert.match(seen[0].premise, /It is a video page\./);
+  assert.match(seen[1].premise, /returned a result titled "Kernel dev talk"/);
+  assert.match(seen[1].premise, /That result says: linux kernel scheduling/);
+});
+
+test('NLI judge refuses to verdict a generic title that has no context (safe bias)', async () => {
+  const judge = new NliJudgeAdapter(async () => 0.99); // would otherwise say "relevant"
+  const msgs = buildMessages({ goal: 'Study OS', page: { title: 'Home', domain: 'youtube.com' }, hints: { titleIsGeneric: true, hasWebContext: false, pageKind: 'home' } });
+  const verdict = parseLlmResponse(await judge.complete(msgs));
+  assert.equal(verdict.classification, 'questionable');
+  assert.equal(verdict.confidence, 0);
+  assert.deepEqual(verdict.evidence, []);
+  assert.match(verdict.reason, /too little information/);
 });
 
 test('runtimeModelVersion defaults to the NLI judge', () => {

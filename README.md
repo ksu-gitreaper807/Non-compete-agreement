@@ -106,7 +106,8 @@ goalguard/
 │   ├── llm/                      OPTIONAL local-LLM layer
 │   │   ├── localLLM.js           LocalLLM interface + TransformersJs / Ollama / llama.cpp adapters
 │   │   ├── llmManager.js         lazy load, timeout, dedupe, idle unload, cool-down
-│   │   ├── promptBuilder.js      structured payload (goal, page, similarities, web context)
+│   │   ├── promptContext.js      the pre-prompt: what GoalGuard is, label rules, traps, calibration
+│   │   ├── promptBuilder.js      structured payload (goal, page, similarities, hints, web context)
 │   │   ├── responseParser.js     strict JSON verdict validation + evidence grounding
 │   │   └── llmClassifier.js      Classifier over the above with its own verdict cache
 │   ├── blocking/
@@ -278,10 +279,42 @@ BGE similarity to the page title, with an `evidenceQuality` grade (`high|medium|
 *Search on:* "only highly ambiguous titles" (default) or "all uncertain pages".
 
 **Layer 4 — local LLM (opt-in)** (`src/llm/`): receives a structured JSON payload (goal, page
-title + domain, the three similarity numbers, web context) under a fixed system prompt and must
-answer strict JSON `{classification, confidence, reason, evidence}`. `responseParser` rejects
-anything else; evidence phrases not present in the supplied context are dropped. Verdicts are
-cached per (model, goal, title, domain, context) so a page costs one generation.
+title + domain, the three similarity numbers, derived hints, web context) under a *priming*
+system prompt and must answer strict JSON `{classification, confidence, reason, evidence}`.
+`responseParser` rejects anything else; evidence phrases not present in the supplied context are
+dropped. Verdicts are cached per (model, prompt, goal, title, domain, context) so a page costs
+one generation.
+
+**Context priming** (`src/llm/promptContext.js`): a model that is only handed "is this title
+relevant to this goal?" guesses — it leans on what it believes about a domain, reads a generic
+title as evidence, or calls anything it cannot identify irrelevant, which blocks pages the user
+needs. So before the payload the judge is told what GoalGuard is and what each verdict *does*
+(irrelevant → the page is blocked behind a wait, questionable → a warning, relevant → opens
+immediately), how to read every payload field (including "the similarity numbers are weak hints,
+not evidence"), and the traps that cause wrong verdicts:
+
+| Trap | Rule given to the model |
+| --- | --- |
+| Platform stereotyping | judge the content, not the domain — a lecture on a video site can be fully on-goal |
+| Generic titles | "Home", "Episode 42", feeds and dashboards are not evidence; with no context → `questionable`, never `irrelevant` |
+| Incidental word overlap | a goal word in a menu, advert or roundup is not relevance |
+| Study material | lectures, docs, tutorials, papers, exercises and tooling for the goal *are* progress |
+| Adjacent topics | news about the field, jobs, marketing, merch and fan content are not |
+| Goal scope | match the goal as written; never broaden or narrow it |
+
+Calibration is deliberately safe: *blocking a page the user needs is worse than letting a
+distraction through*, so thin, mixed or missing evidence must come back `questionable`. The
+payload also carries hints the model cannot compute from a raw string (`titleIsGeneric`,
+`hasWebContext`, a coarse `pageKind`, and which way the embedding layer leaned). Chat runtimes
+additionally get three short worked examples; the NLI judge ignores them and instead gets the
+goal reduced to a topic phrase (`"Study OS"` → *"This page is about operating systems."*).
+
+You can extend the primer: **Options → AI classification → Extra context for the AI judge**
+(`llmContextNotes`, ≤1000 chars) is appended to the system prompt as authoritative, e.g. "I am
+preparing for the GATE CS exam; NPTEL and Coursera lectures count as on-goal; competitive
+programming is a distraction this week". *Show the prompt the judge will receive* renders the
+exact messages for any title. Editing the notes changes the prompt fingerprint, so cached
+verdicts are re-judged instead of being replayed under stale instructions.
 
 **Evidence-aware finalisation** (`decisionPipeline.js`): the LLM's confidence is not trusted
 blindly — `confidence < llmMinConfidence` (0.6) or a definite verdict with `evidenceQuality:
@@ -291,8 +324,10 @@ none` is downgraded to `questionable`. Every result records `source`, `sourceKin
 
 Runtimes (`llmRuntime`): **`nli` (default)** — `Xenova/nli-deberta-v3-xsmall` (int8, ≈70 MB,
 ~22 M params), a natural-language-inference cross-encoder that scores *"This page is about
-<goal>."* against the title and each web-context row; it emits the same strict verdict JSON,
-runs in tens of milliseconds and cannot hallucinate because it generates no text. Alternatives:
+<goal topic>."* against a premise that describes the page (title, site, page kind) and each
+web-context row ("a web search about this page returned …"); it emits the same strict verdict
+JSON, runs in tens of milliseconds and cannot hallucinate because it generates no text. It
+refuses to verdict a generic title that arrived without any web context. Alternatives:
 `transformers` (in-browser generative `Qwen2.5-0.5B-Instruct` q4, ≈400 MB, seconds per page) or
 a **localhost** Ollama / llama.cpp server (e.g. `qwen3:0.6b`) — adapters refuse non-local
 endpoints. All in-browser weights are downloaded once from Hugging Face and cached.
@@ -329,7 +364,7 @@ updates; also flushed by the minute alarm).
 | `classification` | `cls:v1:<config-fingerprint>:<domain>:<normalised title>` | 7 days | 2000 | final result (classification, score, similarities, source, reason) |
 | `embedding` | `emb:v1:<model-version>:<hash(normalised title)>` | 30 days | 500 | Float32Array(384), stored as 4-decimal numbers |
 | `retrieval` | `ret:v2:ddg:<normalised query>` | 24 hours (configurable) | 300 | `{query, timestamp, results: {title, url, domain, snippet}[]}` |
-| `llm` | `llm:v1:<model>:<hash(goal, title, domain, context)>` | 7 days | 1000 | parsed LLM verdict `{classification, confidence, reason, evidence}` |
+| `llm` | `llm:v2:<model>:<hash(prompt version, goal, title, domain, context)>` | 7 days | 1000 | parsed LLM verdict `{classification, confidence, reason, evidence}` |
 
 Options offers *Clear search cache* and *Clear AI classification cache* separately. Feedback
 entries (`feedback` key, ≤2000, domain + title + labels, no URL) are separate from caches.
@@ -470,7 +505,11 @@ after overrides); the popup's *Friction this week* panel is built from these.
     "questionableFrictionSeconds": 5,
     "overrideMinutes": 5,
     "policy": { "relevant": "allow", "questionable": "warn", "irrelevant": "block", "unknown": "allow" },
-    "allowedDomains": [], "blockedDomains": []
+    "allowedDomains": [], "blockedDomains": [],
+    "embeddingsEnabled": true, "llmEnabled": false, "searchEnabled": false,
+    "searchMode": "ambiguous", "searchMaxResults": 5, "searchCacheHours": 24,
+    "llmRuntime": "nli", "llmEndpoint": "", "llmModelName": "",
+    "llmMinConfidence": 0.6, "llmContextNotes": ""
   },
   "rules":   { "allow": ["\\bOSTEP\\b"], "block": ["\\bHelldivers\\b"] },
   "anchors": { "positive": ["operating systems", "virtual memory"], "negative": ["video games and gaming"], "generatedFromGoal": "…" },
@@ -481,7 +520,8 @@ after overrides); the popup's *Friction this week* panel is built from these.
   "currentSession": null,
   "cache:classification": { "schemaVersion": 1, "entries": [["cls:v1:…", { "value": {…}, "createdAt": 0, "lastAccessedAt": 0, "expiresAt": 0 }]] },
   "cache:embedding":      { "schemaVersion": 1, "entries": [["emb:v1:bge-small-en-v1.5-int8:…", { "value": [384 numbers], … }]] },
-  "cache:retrieval":      { "schemaVersion": 1, "entries": [] }
+  "cache:retrieval":      { "schemaVersion": 1, "entries": [] },
+  "cache:llm":            { "schemaVersion": 1, "entries": [["llm:v2:…", { "value": {…}, "createdAt": 0, "lastAccessedAt": 0, "expiresAt": 0 }]] }
 }
 ```
 
@@ -491,7 +531,7 @@ Limits: see [Caching](#caching); sessions 2000 / 14 days retention (`schema.js �
 
 ```bash
 npm test                 # everything (≈30 s)
-npm run test:unit        # 101 tests, no model needed
+npm run test:unit        # 144 tests, no model needed
 npm run test:model       # real BGE model: embeddings, similarity ordering, fixture titles
 npm run test:integration # boots the real background.js against a fake `browser` API
 ```
@@ -513,7 +553,8 @@ Coverage highlights:
   embedding keys.
 * **Session tracker:** per-class accumulation, override accounting, midnight split, bounded logs.
 * **Controller:** allow / block / warn flows, failing classifier is skipped, cache, ignored URLs.
-* **Layer 3:** verdict parsing, prompt content, DuckDuckGo HTML parsing, retrieval cache +
+* **Layer 3:** verdict parsing, prompt content (primer, hints, user context, NLI premise/hypothesis
+  framing), DuckDuckGo HTML parsing, retrieval cache +
   dedupe + permission gating + failure → null, LLM manager lazy load / dedupe / unavailable,
   classifier gating (disabled, confident, no previous), `llm` vs `llm+search`, pipeline
   fallback to the embedding verdict on LLM error.
@@ -626,11 +667,14 @@ mock is not a language model and the fixtures were written by the author.
    Firefox shows (Hugging Face for the in-browser runtimes, or `localhost` for Ollama / llama.cpp).
    The default runtime is the ≈70 MB NLI judge.
    Optionally tick *Enable semantic web search* and approve `html.duckduckgo.com`.
-2. Click **Download & load LLM now** (one-time, a few minutes) — the status line shows progress.
-3. Type an ambiguous title (e.g. `Building Better Systems`) in *Try a title* and press
+2. Add anything the judge should know about your goal in *Extra context for the AI judge*
+   (optional but the single biggest lever on accuracy — see [Context priming](#classification-algorithm)).
+3. Click **Download & load LLM now** (one-time, a few minutes) — the status line shows progress.
+4. Type an ambiguous title (e.g. `Building Better Systems`) in *Try a title* and press
    **Classify** for the full trace (per-stage timings, search status/query/results, LLM JSON,
-   evidence quality, final source) or **Test search + LLM** to probe the two layers directly.
-4. Browse normally. The popup footer shows `● Local model ready` / `● Semantic search: online`;
+   evidence quality, final source), **Test search + LLM** to probe the two layers directly, or
+   **Show the prompt the judge will receive** to see the exact messages sent to the model.
+5. Browse normally. The popup footer shows `● Local model ready` / `● Semantic search: online`;
    `source` reads `llm` / `llm+search` for pages the LLM decided. Click **Why?** for the
    explanation and answer **Correct? Yes/No** to store local feedback (exportable as JSON from
    Options). Tick *Debug mode* to see the `TITLE / REGEX / BGE / SEARCH / LLM / FINAL / TOTAL`

@@ -492,7 +492,10 @@ const router = createMessageRouter({
     if (settings.llmEnabled) {
       try {
         const { buildLlmPayload } = await import('../llm/promptBuilder.js');
-        out.verdict = await llmClassifier.judge(buildLlmPayload({ goal: settings.weeklyGoal, title, domain, webContext: out.retrieval?.results ?? [] }));
+        const { buildSystemPrompt } = await import('../llm/promptContext.js');
+        out.payload = buildLlmPayload({ goal: settings.weeklyGoal, title, domain, webContext: out.retrieval?.results ?? [] });
+        out.systemPrompt = buildSystemPrompt({ extraContext: settings.llmContextNotes });
+        out.verdict = await llmClassifier.judge(out.payload, { extraContext: settings.llmContextNotes });
         if (!out.verdict) out.llmError = 'Model did not return valid JSON';
       } catch (e) {
         out.llmError = String(e?.message ?? e);
